@@ -48,7 +48,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _catalog = new FolderCatalog(_registry);
-        _thumbCache = new ThumbnailCache(_registry);
+        _thumbCache = new ThumbnailCache(_registry, AppSettings.Current.ThumbnailSize);
         FilmstripList.ItemsSource = _vm.Items;
 
         _slideshow.Tick += () => Dispatcher.Invoke(() => Navigate(+1));
@@ -506,6 +506,13 @@ public partial class MainWindow : Window
         new AboutWindow { Owner = this }.ShowDialog();
     }
 
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = new SettingsWindow(_thumbCache) { Owner = this };
+        settings.ThumbnailSettingsChanged += (_, _) => _ = LoadThumbnailsAsync();
+        settings.ShowDialog();
+    }
+
     private void Pin_Click(object sender, RoutedEventArgs e)
     {
         Topmost = !Topmost;
@@ -544,12 +551,13 @@ public partial class MainWindow : Window
         const double titleBarHeight = 44;
         var imageBounds = Canvas.GetImageBoundsRelativeToControl();
 
+        var workArea = SystemParameters.WorkArea;
         double width, height, screenLeft, screenTop;
         if (!imageBounds.IsEmpty)
         {
             var topLeftScreen = Canvas.PointToScreen(imageBounds.TopLeft);
-            width = Math.Clamp(imageBounds.Width, 300, SystemParameters.WorkArea.Width);
-            height = Math.Clamp(imageBounds.Height, 200, SystemParameters.WorkArea.Height - titleBarHeight);
+            width = Math.Clamp(imageBounds.Width, 300, workArea.Width);
+            height = Math.Clamp(imageBounds.Height, 200, workArea.Height - titleBarHeight);
             screenLeft = topLeftScreen.X;
             screenTop = topLeftScreen.Y - titleBarHeight;
         }
@@ -557,9 +565,17 @@ public partial class MainWindow : Window
         {
             width = 1200;
             height = 800;
-            screenLeft = (SystemParameters.WorkArea.Width - width) / 2;
-            screenTop = (SystemParameters.WorkArea.Height - height) / 2;
+            screenLeft = (workArea.Width - width) / 2;
+            screenTop = (workArea.Height - height) / 2;
         }
+
+        // If the image sat edge-to-edge against the screen, the title bar
+        // (drawn titleBarHeight above the image's top) could land above the
+        // work area entirely - or the window could spill past its right/bottom
+        // edge - putting the close/minimize/settings buttons out of reach.
+        // Keep the whole window, title bar included, within the work area.
+        screenLeft = Math.Clamp(screenLeft, workArea.Left, Math.Max(workArea.Left, workArea.Right - width));
+        screenTop = Math.Clamp(screenTop, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - (height + titleBarHeight)));
 
         TopOverlayPanel.Visibility = Visibility.Collapsed;
         TitleRow.Height = new GridLength(titleBarHeight);

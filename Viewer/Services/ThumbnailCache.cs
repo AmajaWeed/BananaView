@@ -15,9 +15,9 @@ namespace Viewer.Services;
 
 public sealed class ThumbnailCache
 {
-    private const int ThumbSize = 100;
     private readonly ImageLoaderRegistry _registry;
     private readonly ConcurrentDictionary<string, BitmapSource?> _memCache = new(StringComparer.OrdinalIgnoreCase);
+    private int _thumbSize;
 
     // Persisted across sessions - re-opening a folder doesn't have to re-decode
     // every file (PSD/HEIC/SAI2 thumbnails in particular aren't cheap) just to
@@ -25,7 +25,21 @@ public sealed class ThumbnailCache
     private static readonly string DiskCacheDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BananaView", "ThumbnailCache");
 
-    public ThumbnailCache(ImageLoaderRegistry registry) => _registry = registry;
+    public ThumbnailCache(ImageLoaderRegistry registry, int thumbSize = 100)
+    {
+        _registry = registry;
+        _thumbSize = thumbSize;
+    }
+
+    // Called when the user changes the thumbnail size in Settings - old
+    // cached tiles are still keyed to a different size, so both caches must
+    // be dropped or the filmstrip would keep showing the previous size.
+    public void SetThumbnailSize(int size)
+    {
+        if (size == _thumbSize) return;
+        _thumbSize = size;
+        _memCache.Clear();
+    }
 
     public async Task<BitmapSource?> GetThumbnailAsync(string path)
     {
@@ -86,15 +100,16 @@ public sealed class ThumbnailCache
         return thumb;
     }
 
-    // Keyed by path + last-write-time + length, so an edited/replaced file
-    // naturally invalidates (gets a different key) instead of showing a stale thumbnail.
-    private static string? GetDiskCachePath(string path)
+    // Keyed by path + last-write-time + length + thumbnail size, so an
+    // edited/replaced file - or a changed Settings thumbnail size - naturally
+    // invalidates (gets a different key) instead of showing a stale thumbnail.
+    private string? GetDiskCachePath(string path)
     {
         try
         {
             var info = new FileInfo(path);
             if (!info.Exists) return null;
-            var key = $"{info.FullName.ToLowerInvariant()}|{info.LastWriteTimeUtc.Ticks}|{info.Length}";
+            var key = $"{info.FullName.ToLowerInvariant()}|{info.LastWriteTimeUtc.Ticks}|{info.Length}|{_thumbSize}";
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
             return Path.Combine(DiskCacheDir, hash + ".png");
         }
@@ -162,14 +177,14 @@ public sealed class ThumbnailCache
             {
                 using var collection = new MagickImageCollection(path);
                 var best = collection.OrderByDescending(i => i.Width).First();
-                best.Thumbnail(new MagickGeometry(ThumbSize, ThumbSize));
+                best.Thumbnail(new MagickGeometry((uint)_thumbSize, (uint)_thumbSize));
                 best.Format = MagickFormat.Png32;
                 pngBytes = best.ToByteArray();
             }
             else
             {
                 using var image = new MagickImage(path);
-                image.Thumbnail(new MagickGeometry(ThumbSize, ThumbSize));
+                image.Thumbnail(new MagickGeometry((uint)_thumbSize, (uint)_thumbSize));
                 image.Format = MagickFormat.Png32;
                 pngBytes = image.ToByteArray();
             }
@@ -189,23 +204,23 @@ public sealed class ThumbnailCache
         var bmp = new BitmapImage();
         bmp.BeginInit();
         bmp.CacheOption = BitmapCacheOption.OnLoad;
-        bmp.DecodePixelWidth = ThumbSize;
+        bmp.DecodePixelWidth = _thumbSize;
         bmp.UriSource = new Uri(path, UriKind.Absolute);
         bmp.EndInit();
         bmp.Freeze();
         return bmp;
     }
 
-    private static BitmapSource Downscale(BitmapSource src)
+    private BitmapSource Downscale(BitmapSource src)
     {
         var maxDim = Math.Max(src.PixelWidth, src.PixelHeight);
-        if (maxDim <= ThumbSize)
+        if (maxDim <= _thumbSize)
         {
             if (src.CanFreeze) src.Freeze();
             return src;
         }
 
-        var scale = (double)ThumbSize / maxDim;
+        var scale = (double)_thumbSize / maxDim;
         var scaled = new TransformedBitmap(src, new ScaleTransform(scale, scale));
         scaled.Freeze();
         return scaled;
