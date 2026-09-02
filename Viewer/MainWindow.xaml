@@ -142,11 +142,6 @@
                 </ListBox>
                 </Border>
 
-                <Border Background="#CC101010" Padding="0,3">
-                    <TextBlock x:Name="FileNameText" HorizontalAlignment="Center" FontSize="11"
-                               Foreground="#CCCCCC" TextTrimming="CharacterEllipsis"/>
-                </Border>
-
                 <Border Background="#CC101010" Padding="5,3">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -155,16 +150,22 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
-                        <!-- Zoom hugs the left side of the arrows, but the arrows themselves (column 1)
-                             stay exactly centered on the whole bar regardless: column 0 and column 2 are
-                             equal-weight star columns, so an Auto column between them always sits at the
+                        <!-- Filename hugs the far left edge; zoom hugs the left side of the
+                             arrows. The arrows themselves (column 1) stay exactly centered on
+                             the whole bar regardless: column 0 and column 2 are equal-weight
+                             star columns, so an Auto column between them always sits at the
                              true midpoint no matter how wide either side's content is. -->
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button Content="&#xE738;" Click="ZoomOut_Click" Style="{StaticResource ToolbarButton}" ToolTip="Уменьшить"/>
-                            <Button Content="&#xE9A6;" Click="Fit_Click" Style="{StaticResource ToolbarButton}" ToolTip="По размеру окна"/>
-                            <Button Content="&#xE710;" Click="ZoomIn_Click" Style="{StaticResource ToolbarButton}" ToolTip="Увеличить"/>
-                            <Separator Style="{StaticResource ToolbarSeparator}"/>
-                        </StackPanel>
+                        <DockPanel Grid.Column="0" LastChildFill="False" VerticalAlignment="Center">
+                            <TextBlock x:Name="FileNameText" DockPanel.Dock="Left" FontSize="11"
+                                       Foreground="#CCCCCC" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" Margin="6,0,0,0" MaxWidth="220"/>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="&#xE738;" Click="ZoomOut_Click" Style="{StaticResource ToolbarButton}" ToolTip="Уменьшить"/>
+                                <Button Content="&#xE9A6;" Click="Fit_Click" Style="{StaticResource ToolbarButton}" ToolTip="По размеру окна"/>
+                                <Button Content="&#xE710;" Click="ZoomIn_Click" Style="{StaticResource ToolbarButton}" ToolTip="Увеличить"/>
+                                <Separator Style="{StaticResource ToolbarSeparator}"/>
+                            </StackPanel>
+                        </DockPanel>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Button Content="&#xE892;" Click="Prev_Click" Style="{StaticResource BigNavToolbarButton}" ToolTip="Предыдущее"/>
@@ -187,6 +188,9 @@
                                 <Separator Style="{StaticResource ToolbarSeparator}"/>
                                 <Button Content="&#xE8C8;" Click="Copy_Click" Style="{StaticResource ToolbarButton}" ToolTip="Копировать в буфер обмена"/>
                                 <Button Content="&#xE736;" Click="Ocr_Click" Style="{StaticResource ToolbarButton}" ToolTip="Распознать текст на изображении (OCR) и скопировать в буфер обмена"/>
+                                <Button x:Name="SearchImageButton" Content="&#xE773;" Click="SearchImage_Click" Style="{StaticResource ToolbarButton}" ToolTip="Поиск по изображению"/>
+                                <Separator Style="{StaticResource ToolbarSeparator}"/>
+                                <Button Content="&#xE70F;" Click="EditIn_Click" Style="{StaticResource ToolbarButton}" ToolTip="Редактировать в..."/>
                             </StackPanel>
                         </DockPanel>
                     </Grid>

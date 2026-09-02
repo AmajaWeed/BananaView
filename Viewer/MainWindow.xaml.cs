@@ -263,6 +263,51 @@ public partial class MainWindow : Window
             // Clipboard can be transiently locked by another app - not fatal.
         }
     }
+    // Neither Google nor Yandex offer a no-account "search by local file" API,
+    // but both search-by-image pages accept a pasted image in their search
+    // box - so this copies the current image to the clipboard (like Copy_Click)
+    // and opens the picked engine in the user's default browser; the user
+    // finishes with one Ctrl+V.
+    private void SearchImage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentImage == null) return;
+
+        var menu = new ContextMenu();
+        var google = new MenuItem { Header = "Google Lens" };
+        google.Click += (_, _) => SearchByImage("https://lens.google.com/");
+        var yandex = new MenuItem { Header = "Яндекс.Картинки" };
+        yandex.Click += (_, _) => SearchByImage("https://yandex.ru/images/");
+        menu.Items.Add(google);
+        menu.Items.Add(yandex);
+        menu.PlacementTarget = SearchImageButton;
+        menu.IsOpen = true;
+    }
+
+    private void SearchByImage(string url)
+    {
+        if (_currentImage == null) return;
+        try { Clipboard.SetImage(_currentImage.Preview); } catch { /* transiently locked - not fatal */ }
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { /* no default browser - not fatal */ }
+        ShowToast("Изображение скопировано - вставьте его в поле поиска (Ctrl+V)");
+    }
+
+    // Delegates to the OS's own "Open with" picker rather than building a
+    // custom app-chooser - it already knows every installed app that can
+    // handle the file, remembers the user's last choice, etc.
+    private void EditIn_Click(object sender, RoutedEventArgs e)
+    {
+        var path = _catalog.CurrentFile;
+        if (path == null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo("rundll32.exe", $"shell32.dll,OpenAs_RunDLL \"{path}\"") { UseShellExecute = true });
+        }
+        catch
+        {
+            // No shell32 OpenAs handler available - not fatal.
+        }
+    }
+
     private void Prev_Click(object sender, RoutedEventArgs e) => Navigate(-1);
     private void Next_Click(object sender, RoutedEventArgs e) => Navigate(+1);
 
