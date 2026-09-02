@@ -1,12 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Viewer.Loaders;
@@ -157,8 +160,9 @@ public partial class MainWindow : Window
             var image = await _registry.LoadAsync(path);
             if (token != _loadToken) return; // superseded by a newer navigation
 
-            // Leaving any in-app video playback behind when the image changes.
+            // Leaving any in-app video playback / OCR overlay behind when the image changes.
             StopVideoPlayback();
+            CloseOcrOverlay();
 
             Canvas.SetImage(image, direction);
             _currentImage = image;
@@ -337,14 +341,15 @@ public partial class MainWindow : Window
         ShowLoading("Распознавание текста...");
         try
         {
-            var text = await Task.Run(() => OcrService.RecognizeText(image.Preview));
-            if (string.IsNullOrWhiteSpace(text))
+            var lines = await Task.Run(() => OcrService.RecognizeLines(image.Preview));
+            if (image != _currentImage) return; // navigated away while recognizing
+
+            if (lines.Count == 0)
             {
                 ShowToast("Текст не найден");
                 return;
             }
-            Clipboard.SetText(text);
-            ShowToast("Текст скопирован в буфер обмена");
+            ShowOcrOverlay(image, lines);
         }
         catch (Exception ex)
         {
@@ -354,6 +359,72 @@ public partial class MainWindow : Window
         {
             HideLoading();
         }
+    }
+
+    // Darkens the image except over each recognized line, and drops a
+    // read-only textbox into each "hole" so the user can drag-select and
+    // Ctrl+C copy exactly the text they see - not a single blind
+    // copy-everything action.
+    private void ShowOcrOverlay(LoadedImage image, IReadOnlyList<OcrLine> lines)
+    {
+        var imageBounds = Canvas.GetImageBoundsRelativeToControl();
+        if (imageBounds.IsEmpty) return;
+
+        var bmpW = image.Preview.PixelWidth;
+        var bmpH = image.Preview.PixelHeight;
+        var sx = imageBounds.Width / bmpW;
+        var sy = imageBounds.Height / bmpH;
+
+        var mask = new GeometryGroup { FillRule = FillRule.EvenOdd };
+        mask.Children.Add(new RectangleGeometry(imageBounds));
+
+        OcrTextCanvas.Children.Clear();
+
+        const double padding = 2;
+        foreach (var line in lines)
+        {
+            var r = line.BoundingRect;
+            var screenRect = new Rect(
+                imageBounds.Left + r.X * sx - padding,
+                imageBounds.Top + r.Y * sy - padding,
+                r.Width * sx + padding * 2,
+                r.Height * sy + padding * 2);
+
+            mask.Children.Add(new RectangleGeometry(screenRect));
+
+            var box = new TextBox
+            {
+                Text = line.Text,
+                IsReadOnly = true,
+                BorderThickness = new Thickness(0),
+                Background = System.Windows.Media.Brushes.Transparent,
+                Foreground = System.Windows.Media.Brushes.White,
+                FontSize = Math.Clamp(screenRect.Height * 0.7, 8, 72),
+                Padding = new Thickness(0),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.NoWrap,
+                Width = screenRect.Width,
+                Height = screenRect.Height
+            };
+            System.Windows.Controls.Canvas.SetLeft(box, screenRect.Left);
+            System.Windows.Controls.Canvas.SetTop(box, screenRect.Top);
+            OcrTextCanvas.Children.Add(box);
+        }
+
+        OcrMaskPath.Data = mask;
+        OcrOverlay.Visibility = Visibility.Visible;
+        ShowToast("Выделите текст и нажмите Ctrl+C");
+    }
+
+    private void CloseOcrOverlay()
+    {
+        OcrOverlay.Visibility = Visibility.Collapsed;
+        OcrTextCanvas.Children.Clear();
+    }
+
+    private void OcrOverlay_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource == OcrMaskPath) CloseOcrOverlay();
     }
 
     private void ShowLoading(string message)
@@ -587,7 +658,9 @@ public partial class MainWindow : Window
             case Key.R:
                 Canvas.RotateBy(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -90 : 90); break;
             case Key.Escape:
-                if (_fullscreen) ToggleFullscreen(); else Close();
+                if (OcrOverlay.Visibility == Visibility.Visible) CloseOcrOverlay();
+                else if (_fullscreen) ToggleFullscreen();
+                else Close();
                 break;
         }
     }

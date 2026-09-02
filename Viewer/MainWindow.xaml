@@ -67,6 +67,16 @@
                 </StackPanel>
             </Grid>
 
+            <!-- OCR result: darkens the image except over recognized text lines,
+                 each of which gets its own selectable read-only textbox "hole" -
+                 the standard "select and copy the text you actually see" pattern
+                 (PowerToys Text Extractor / Apple Live Text), not a plain
+                 copy-everything button. -->
+            <Grid x:Name="OcrOverlay" Visibility="Collapsed" MouseLeftButtonDown="OcrOverlay_MouseLeftButtonDown">
+                <Path x:Name="OcrMaskPath" Fill="#B3000000"/>
+                <Canvas x:Name="OcrTextCanvas" Background="Transparent"/>
+            </Grid>
+
             <Border x:Name="ToastBorder" Background="#DD222222" CornerRadius="6" Padding="14,8"
                     HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,50,0,0"
                     Opacity="0" IsHitTestVisible="False">

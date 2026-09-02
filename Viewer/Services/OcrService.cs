@@ -1,13 +1,18 @@
 using System;
-using System.Runtime.InteropServices;
-using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices.WindowsRuntime;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 
 namespace Viewer.Services;
+
+// One recognized line of text and its bounding box, in the SOURCE BITMAP's own
+// pixel coordinates (not screen coordinates - the caller maps that, since it
+// depends on the image's current on-screen position/zoom).
+public sealed record OcrLine(string Text, Rect BoundingRect);
 
 // Uses Windows' own built-in OCR engine (Windows.Media.Ocr) - no extra
 // download/NuGet, works offline, and is already present on every Windows 10/11
@@ -16,7 +21,7 @@ namespace Viewer.Services;
 // request (see MainWindow.Ocr_Click) - never eagerly at startup.
 public static class OcrService
 {
-    public static string RecognizeText(BitmapSource source)
+    public static IReadOnlyList<OcrLine> RecognizeLines(BitmapSource source)
     {
         var engine = OcrEngine.TryCreateFromUserProfileLanguages()
             ?? TryAnyInstalledLanguage()
@@ -26,7 +31,24 @@ public static class OcrService
 
         var softwareBitmap = ToSoftwareBitmap(source);
         var result = engine.RecognizeAsync(softwareBitmap).GetAwaiter().GetResult();
-        return result.Text;
+
+        var lines = new List<OcrLine>();
+        foreach (var line in result.Lines)
+        {
+            if (line.Words.Count == 0) continue;
+
+            double left = double.MaxValue, top = double.MaxValue, right = double.MinValue, bottom = double.MinValue;
+            foreach (var word in line.Words)
+            {
+                var r = word.BoundingRect;
+                left = Math.Min(left, r.X);
+                top = Math.Min(top, r.Y);
+                right = Math.Max(right, r.X + r.Width);
+                bottom = Math.Max(bottom, r.Y + r.Height);
+            }
+            lines.Add(new OcrLine(line.Text, new Rect(left, top, right - left, bottom - top)));
+        }
+        return lines;
     }
 
     private static OcrEngine? TryAnyInstalledLanguage()
@@ -48,22 +70,10 @@ public static class OcrService
         var pixels = new byte[stride * h];
         converted.CopyPixels(pixels, stride, 0);
 
-        var bitmap = new SoftwareBitmap(BitmapPixelFormat.Bgra8, w, h, BitmapAlphaMode.Premultiplied);
-        using var buffer = bitmap.LockBuffer(BitmapBufferAccessMode.Write);
-        using var reference = buffer.CreateReference();
-        unsafe
-        {
-            ((IMemoryBufferByteAccess)reference).GetBuffer(out var dataPtr, out var capacity);
-            Marshal.Copy(pixels, 0, (IntPtr)dataPtr, Math.Min(pixels.Length, (int)capacity));
-        }
-        return bitmap;
-    }
-
-    [ComImport]
-    [Guid("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private unsafe interface IMemoryBufferByteAccess
-    {
-        void GetBuffer(out byte* buffer, out uint capacity);
+        // AsBuffer()'s IBuffer<->byte[] bridge is a plain BCL marshaller, not a
+        // CsWinRT-projected COM interface - unlike the classic IMemoryBufferByteAccess
+        // unsafe-interop pattern (which throws "Invalid cast from WinRT.IInspectable"
+        // under this TFM's CsWinRT projections), this route just works.
+        return SoftwareBitmap.CreateCopyFromBuffer(pixels.AsBuffer(), BitmapPixelFormat.Bgra8, w, h, BitmapAlphaMode.Premultiplied);
     }
 }
