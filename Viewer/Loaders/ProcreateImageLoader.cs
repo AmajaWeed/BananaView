@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
 using Viewer.Services;
@@ -54,12 +56,19 @@ public sealed class ProcreateImageLoader : IImageLoader
         }
         bmp.Freeze();
 
-        var hasVideo = archive.Entries.Any(e => VideoExtensions.Contains(Path.GetExtension(e.FullName), StringComparer.OrdinalIgnoreCase));
+        var hasVideo = archive.Entries.Any(IsVideoSegmentEntry);
         return new LoadedImage(bmp, procreateVideoSourcePath: hasVideo ? path : null);
     });
 
     private static ZipArchiveEntry? FindEntry(ZipArchive archive, string name) =>
         archive.Entries.FirstOrDefault(e => string.Equals(e.FullName, name, StringComparison.OrdinalIgnoreCase));
+
+    // Recording segments live specifically under "video/" in the archive -
+    // matching on extension alone anywhere in the zip risked pulling in any
+    // other same-extension file that happened to be in there too.
+    private static bool IsVideoSegmentEntry(ZipArchiveEntry e) =>
+        VideoExtensions.Contains(Path.GetExtension(e.FullName), StringComparer.OrdinalIgnoreCase) &&
+        e.FullName.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Extracts every recording segment to its own cached file, in
     /// natural filename order (segment-2 before segment-10), and returns
@@ -76,13 +85,19 @@ public sealed class ProcreateImageLoader : IImageLoader
     {
         using var archive = ZipFile.OpenRead(procreatePath);
         var segments = archive.Entries
-            .Where(e => VideoExtensions.Contains(Path.GetExtension(e.FullName), StringComparer.OrdinalIgnoreCase))
+            .Where(IsVideoSegmentEntry)
             .OrderBy(e => e.Name, NaturalStringComparer.Instance)
             .ToList();
         if (segments.Count == 0) return Array.Empty<string>();
 
-        var stamp = File.GetLastWriteTimeUtc(procreatePath).Ticks;
-        var cacheDir = Path.Combine(Path.GetTempPath(), "ViewerProcreateVideo", $"{Path.GetFileNameWithoutExtension(procreatePath)}_{stamp}");
+        // Keyed by full path + last-write-time + length (not just filename),
+        // so two different files can never collide on the same cache
+        // directory - e.g. cloud-synced files that share an identical
+        // last-write-time after a batch sync.
+        var info = new FileInfo(procreatePath);
+        var key = $"{info.FullName.ToLowerInvariant()}|{info.LastWriteTimeUtc.Ticks}|{info.Length}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+        var cacheDir = Path.Combine(Path.GetTempPath(), "ViewerProcreateVideo", hash);
         Directory.CreateDirectory(cacheDir);
 
         var paths = new string[segments.Count];
