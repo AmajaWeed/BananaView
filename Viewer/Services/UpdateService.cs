@@ -1,4 +1,7 @@
 using System;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -7,30 +10,29 @@ using System.Threading.Tasks;
 namespace Viewer.Services;
 
 // Checks GitHub Releases for a newer tagged version than the one currently
-// running. Deliberately does NOT download or run anything itself - it only
-// reports whether an update exists and hands back the release page URL, so
-// the actual download/install stays a manual, user-confirmed action (opened
-// in the default browser).
+// running, and can carry out the update itself: download the release's zip
+// asset into an isolated temp folder, then hand off to a small PowerShell
+// script that waits for this process to exit, mirrors the temp folder over
+// the install directory, deletes the temp folder, and relaunches the app.
+// Doing the actual file swap from a separate script (not from inside the
+// running app) is required - a running .exe can't overwrite itself.
 public static class UpdateService
 {
     private const string Owner = "AmajaWeed";
     private const string Repo = "BananaView";
 
-    public sealed record UpdateCheckResult(bool UpdateAvailable, string? LatestVersion, string? ReleaseUrl, string? Error);
+    public sealed record UpdateCheckResult(bool UpdateAvailable, string? LatestVersion, string? ReleaseUrl, string? AssetUrl, string? Error);
 
     public static async Task<UpdateCheckResult> CheckForUpdateAsync()
     {
         try
         {
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BananaView", CurrentVersion.ToString()));
-            http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-            http.Timeout = TimeSpan.FromSeconds(10);
+            using var http = NewClient();
 
             var url = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
             using var response = await http.GetAsync(url);
             if (!response.IsSuccessStatusCode)
-                return new UpdateCheckResult(false, null, null, $"Сервер вернул {(int)response.StatusCode}");
+                return new UpdateCheckResult(false, null, null, null, $"Сервер вернул {(int)response.StatusCode}");
 
             using var stream = await response.Content.ReadAsStreamAsync();
             using var doc = await JsonDocument.ParseAsync(stream);
@@ -39,17 +41,117 @@ public static class UpdateService
                 ? htmlUrlProp.GetString()
                 : $"https://github.com/{Owner}/{Repo}/releases/latest";
 
+            string? assetUrl = null;
+            if (doc.RootElement.TryGetProperty("assets", out var assets))
+            {
+                foreach (var asset in assets.EnumerateArray())
+                {
+                    var name = asset.GetProperty("name").GetString() ?? "";
+                    if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        assetUrl = asset.GetProperty("browser_download_url").GetString();
+                        break;
+                    }
+                }
+            }
+
             var tagVersionText = tag.TrimStart('v', 'V');
             if (!Version.TryParse(tagVersionText, out var latest))
-                return new UpdateCheckResult(false, tag, releaseUrl, "Не удалось разобрать версию релиза");
+                return new UpdateCheckResult(false, tag, releaseUrl, assetUrl, "Не удалось разобрать версию релиза");
 
             var isNewer = latest > CurrentVersion;
-            return new UpdateCheckResult(isNewer, tag, releaseUrl, null);
+            return new UpdateCheckResult(isNewer, tag, releaseUrl, assetUrl, null);
         }
         catch (Exception ex)
         {
-            return new UpdateCheckResult(false, null, null, ex.Message);
+            return new UpdateCheckResult(false, null, null, null, ex.Message);
         }
+    }
+
+    // Downloads the release zip into %TEMP%\BananaViewUpdate\<version>\download\
+    // and extracts it into ...\extracted\ next to it - both under one temp
+    // root so ApplyUpdateAndRestart can delete the whole thing in one step
+    // once the swap is done.
+    public static async Task<string> DownloadAndExtractAsync(string assetUrl, string version, IProgress<string>? progress = null)
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "BananaViewUpdate", version.TrimStart('v', 'V'));
+        if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, recursive: true);
+        Directory.CreateDirectory(tempRoot);
+
+        var zipPath = Path.Combine(tempRoot, "update.zip");
+        var extractedDir = Path.Combine(tempRoot, "extracted");
+
+        progress?.Report("Загрузка обновления...");
+        using (var http = NewClient())
+        {
+            http.Timeout = TimeSpan.FromMinutes(5);
+            using var response = await http.GetAsync(assetUrl, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            await using var fileStream = File.Create(zipPath);
+            await response.Content.CopyToAsync(fileStream);
+        }
+
+        progress?.Report("Распаковка...");
+        Directory.CreateDirectory(extractedDir);
+        ZipFile.ExtractToDirectory(zipPath, extractedDir);
+
+        // A zip made from "right-click -> Compress" on the publish folder
+        // nests everything under one subfolder - if that's all extractedDir
+        // contains, treat that subfolder as the real payload root.
+        var entries = Directory.GetFileSystemEntries(extractedDir);
+        if (entries.Length == 1 && Directory.Exists(entries[0]))
+            extractedDir = entries[0];
+
+        return extractedDir;
+    }
+
+    // Writes and launches a PowerShell script that waits for this process to
+    // exit, mirrors extractedDir over the install directory (robocopy /MIR),
+    // deletes the whole temp update root, and starts the app again - then
+    // shuts this process down so the script's wait immediately succeeds.
+    public static void ApplyUpdateAndRestart(string extractedDir)
+    {
+        var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+        var exePath = Path.Combine(installDir, "BananaView.exe");
+        var tempRoot = Directory.GetParent(extractedDir)!.FullName; // .../BananaViewUpdate/<version>
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"BananaViewUpdate_{Guid.NewGuid():N}.ps1");
+
+        var script = $$"""
+            $ErrorActionPreference = 'SilentlyContinue'
+            $exe = "{{exePath}}"
+            for ($i = 0; $i -lt 60; $i++) {
+                $locked = $true
+                try {
+                    $stream = [IO.File]::Open($exe, 'Open', 'ReadWrite', 'None')
+                    $stream.Close()
+                    $locked = $false
+                } catch {}
+                if (-not $locked) { break }
+                Start-Sleep -Milliseconds 500
+            }
+            robocopy "{{extractedDir}}" "{{installDir}}" /MIR /NFL /NDL /NJH /NJS /R:3 /W:1 | Out-Null
+            Remove-Item -Recurse -Force "{{tempRoot}}"
+            Start-Process -FilePath "{{exePath}}"
+            """;
+        File.WriteAllText(scriptPath, script);
+
+        Process.Start(new ProcessStartInfo("powershell.exe",
+            $"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{scriptPath}\"")
+        {
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        });
+
+        System.Windows.Application.Current.Shutdown();
+    }
+
+    private static HttpClient NewClient()
+    {
+        var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BananaView", CurrentVersion.ToString()));
+        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        http.Timeout = TimeSpan.FromSeconds(10);
+        return http;
     }
 
     public static Version CurrentVersion =>

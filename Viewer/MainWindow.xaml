@@ -45,7 +45,14 @@
                  image, shown only while actually playing. -->
             <MediaElement x:Name="VideoPlayer" Visibility="Collapsed" Stretch="Uniform"
                           LoadedBehavior="Manual" UnloadedBehavior="Manual"
-                          MediaEnded="VideoPlayer_MediaEnded" IsHitTestVisible="False"/>
+                          MediaEnded="VideoPlayer_MediaEnded" MediaOpened="VideoPlayer_MediaOpened"
+                          IsHitTestVisible="False"/>
+
+            <!-- Scrubber across the whole joined-in-sequence timelapse (segment
+                 index + fractional position within it), Procreate video only. -->
+            <Slider x:Name="VideoSeekBar" Visibility="Collapsed" VerticalAlignment="Bottom"
+                    Margin="16,0,16,96" Minimum="0" SmallChange="0.01" LargeChange="0.1"
+                    PreviewMouseDown="VideoSeekBar_PreviewMouseDown" PreviewMouseUp="VideoSeekBar_PreviewMouseUp"/>
 
             <TextBlock x:Name="EmptyHint" Text="Перетащите изображение сюда или откройте через 'Открыть с помощью'"
                        Foreground="#777777" HorizontalAlignment="Center" VerticalAlignment="Center"

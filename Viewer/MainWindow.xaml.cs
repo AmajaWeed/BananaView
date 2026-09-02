@@ -43,6 +43,10 @@ public partial class MainWindow : Window
     private int _loadToken;
     private string? _procreateVideoSourcePath;
     private bool _videoPlaying;
+    private string[] _videoSegments = Array.Empty<string>();
+    private int _videoSegmentIndex;
+    private bool _videoSeekBarUserDown;
+    private readonly DispatcherTimer _videoProgressTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private LoadedImage? _currentImage;
 
     public MainWindow()
@@ -57,6 +61,8 @@ public partial class MainWindow : Window
         _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _hideTimer.Tick += (_, _) => HideOverlayIfIdle();
 
+        _videoProgressTimer.Tick += (_, _) => UpdateVideoSeekBar();
+
         TitlePinButton.Content = PinGlyph;
         TopPinButton.Content = PinGlyph;
     }
@@ -67,6 +73,23 @@ public partial class MainWindow : Window
         var path = args.Skip(1).FirstOrDefault(a => File.Exists(a) && _registry.IsSupported(Path.GetExtension(a)));
         if (path != null) OpenFile(path);
         else ShowOverlay();
+
+        _ = CheckForUpdateOnStartupAsync();
+    }
+
+    // Quiet, non-blocking check - only surfaces the update window if there's
+    // actually something new, and stays out of the way if the user already
+    // skipped that version or asked to be reminded later.
+    private async Task CheckForUpdateOnStartupAsync()
+    {
+        if (AppSettings.Current.UpdatePostponedUntilUtc is { } postponedUntil && DateTime.UtcNow < postponedUntil)
+            return;
+
+        var result = await UpdateService.CheckForUpdateAsync();
+        if (!result.UpdateAvailable) return;
+        if (result.LatestVersion == AppSettings.Current.SkippedUpdateVersion) return;
+
+        new UpdateWindow(result) { Owner = this }.Show();
     }
 
     // ---- Fix: a WindowStyle="None" window's WindowState="Maximized" covers the
@@ -287,7 +310,16 @@ public partial class MainWindow : Window
     private void SearchByImage(string url)
     {
         if (_currentImage == null) return;
-        try { Clipboard.SetImage(ToJpegClipboardImage(_currentImage.Preview)); }
+        try
+        {
+            using var jpegStream = ToJpegStream(_currentImage.Preview);
+            using var gdiBitmap = new System.Drawing.Bitmap(jpegStream);
+            // System.Windows.Forms.Clipboard (GDI+-backed) writes a standard
+            // bottom-up DIB - unlike WPF's own Clipboard.SetImage, whose DIB
+            // header non-WPF apps (browsers included) often misread, producing
+            // a skewed/garbled paste.
+            System.Windows.Forms.Clipboard.SetImage(gdiBitmap);
+        }
         catch { /* transiently locked - not fatal */ }
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { /* no default browser - not fatal */ }
         ShowToast("Изображение скопировано - вставьте его в поле поиска (Ctrl+V)");
@@ -297,9 +329,9 @@ public partial class MainWindow : Window
     // pixel original or an alpha-channel PNG - so this downscales oversized
     // images and round-trips through JPEG (flattening any transparency onto
     // white, since JPEG has none) before it ever reaches the clipboard.
-    private static BitmapSource ToJpegClipboardImage(BitmapSource source)
+    private static MemoryStream ToJpegStream(BitmapSource source)
     {
-        const int maxDimension = 2000;
+        const int maxDimension = 1600;
         BitmapSource scaled = source;
         var maxSide = Math.Max(source.PixelWidth, source.PixelHeight);
         if (maxSide > maxDimension)
@@ -321,17 +353,10 @@ public partial class MainWindow : Window
 
         var jpegEncoder = new JpegBitmapEncoder { QualityLevel = 90 };
         jpegEncoder.Frames.Add(BitmapFrame.Create(rendered));
-        using var ms = new MemoryStream();
+        var ms = new MemoryStream();
         jpegEncoder.Save(ms);
         ms.Position = 0;
-
-        var jpegDecoded = new BitmapImage();
-        jpegDecoded.BeginInit();
-        jpegDecoded.CacheOption = BitmapCacheOption.OnLoad;
-        jpegDecoded.StreamSource = ms;
-        jpegDecoded.EndInit();
-        jpegDecoded.Freeze();
-        return jpegDecoded;
+        return ms;
     }
 
     // Delegates to the OS's own "Open with" picker rather than building a
@@ -370,32 +395,37 @@ public partial class MainWindow : Window
                 return;
             }
 
-            // First press: join the recording's segments (or reuse the cached
-            // joined file from a previous press) - deliberately NOT done at
-            // load time, only here, on demand.
-            if (VideoPlayer.Source == null)
+            // First press: extract every recording segment (or reuse the
+            // cached extraction from a previous press) - deliberately NOT
+            // done at load time, only here, on demand.
+            if (_videoSegments.Length == 0)
             {
                 var sourcePath = _procreateVideoSourcePath;
-                ShowLoading("Склеивание таймлапса...");
-                string? joinedPath;
+                ShowLoading("Подготовка таймлапса...");
+                string[] segments;
                 try
                 {
-                    joinedPath = await Task.Run(() => ProcreateImageLoader.EnsureJoinedVideo(sourcePath));
+                    segments = await Task.Run(() => ProcreateImageLoader.EnsureVideoSegments(sourcePath));
                 }
                 finally
                 {
                     HideLoading();
                 }
 
-                if (sourcePath != _procreateVideoSourcePath) return; // navigated away while joining
-                if (joinedPath == null) return;
+                if (sourcePath != _procreateVideoSourcePath) return; // navigated away while extracting
+                if (segments.Length == 0) return;
 
-                VideoPlayer.Source = new Uri(joinedPath);
+                _videoSegments = segments;
+                _videoSegmentIndex = 0;
                 VideoPlayer.Visibility = Visibility.Visible;
+                VideoPlayer.Source = new Uri(_videoSegments[0]);
+                VideoSeekBar.Maximum = _videoSegments.Length;
+                VideoSeekBar.Visibility = Visibility.Visible;
             }
 
             VideoPlayer.Play();
             _videoPlaying = true;
+            _videoProgressTimer.Start();
             PlayButton.Content = PauseGlyph;
             return;
         }
@@ -404,10 +434,61 @@ public partial class MainWindow : Window
         PlayButton.Content = Canvas.IsGifPaused ? PlayGlyph : PauseGlyph;
     }
 
+    // Segments are independent MOV/MP4 containers (see EnsureVideoSegments) -
+    // "one continuous timelapse" comes from playing them back to back here,
+    // not from any file-level joining.
     private void VideoPlayer_MediaEnded(object sender, RoutedEventArgs e)
     {
-        VideoPlayer.Position = TimeSpan.Zero;
+        _videoSegmentIndex++;
+        if (_videoSegmentIndex >= _videoSegments.Length) _videoSegmentIndex = 0; // loop the whole sequence
+        VideoPlayer.Source = new Uri(_videoSegments[_videoSegmentIndex]);
         VideoPlayer.Play();
+    }
+
+    private TimeSpan? _videoSegmentDuration;
+    private double? _pendingSeekFraction;
+
+    private void VideoPlayer_MediaOpened(object sender, RoutedEventArgs e)
+    {
+        _videoSegmentDuration = VideoPlayer.NaturalDuration.HasTimeSpan ? VideoPlayer.NaturalDuration.TimeSpan : null;
+        if (_pendingSeekFraction is { } fraction && _videoSegmentDuration is { } duration)
+        {
+            VideoPlayer.Position = TimeSpan.FromSeconds(duration.TotalSeconds * fraction);
+        }
+        _pendingSeekFraction = null;
+    }
+
+    private void UpdateVideoSeekBar()
+    {
+        if (_videoSeekBarUserDown || _videoSegments.Length == 0) return;
+        var fraction = 0.0;
+        if (_videoSegmentDuration is { TotalSeconds: > 0 } duration)
+            fraction = VideoPlayer.Position.TotalSeconds / duration.TotalSeconds;
+        VideoSeekBar.Value = _videoSegmentIndex + Math.Clamp(fraction, 0, 1);
+    }
+
+    private void VideoSeekBar_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _videoSeekBarUserDown = true;
+
+    private void VideoSeekBar_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_videoSeekBarUserDown || _videoSegments.Length == 0) return;
+        _videoSeekBarUserDown = false;
+
+        var value = Math.Clamp(VideoSeekBar.Value, 0, _videoSegments.Length - 0.001);
+        var targetIndex = (int)Math.Floor(value);
+        var fraction = value - targetIndex;
+
+        if (targetIndex == _videoSegmentIndex && _videoSegmentDuration is { } duration)
+        {
+            VideoPlayer.Position = TimeSpan.FromSeconds(duration.TotalSeconds * fraction);
+        }
+        else
+        {
+            _videoSegmentIndex = targetIndex;
+            _pendingSeekFraction = fraction;
+            VideoPlayer.Source = new Uri(_videoSegments[targetIndex]);
+            if (_videoPlaying) VideoPlayer.Play();
+        }
     }
 
     private void StopVideoPlayback()
@@ -419,7 +500,13 @@ public partial class MainWindow : Window
             VideoPlayer.Source = null;
         }
         VideoPlayer.Visibility = Visibility.Collapsed;
+        VideoSeekBar.Visibility = Visibility.Collapsed;
+        _videoProgressTimer.Stop();
         _videoPlaying = false;
+        _videoSegments = Array.Empty<string>();
+        _videoSegmentIndex = 0;
+        _videoSegmentDuration = null;
+        _pendingSeekFraction = null;
     }
 
     private async void Ocr_Click(object sender, RoutedEventArgs e)

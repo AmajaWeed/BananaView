@@ -1,7 +1,4 @@
-using System;
-using System.Diagnostics;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using Viewer.Services;
 
@@ -32,22 +29,8 @@ public partial class AboutWindow : Window
         }
         else if (result.UpdateAvailable)
         {
-            UpdateStatusText.Text = $"Доступна новая версия {result.LatestVersion}.";
-            var openButton = new Button
-            {
-                Content = "Открыть страницу загрузки",
-                Padding = new Thickness(12, 6, 12, 6),
-                Margin = new Thickness(0, 8, 0, 0),
-                Background = System.Windows.Media.Brushes.Transparent,
-                Foreground = System.Windows.Media.Brushes.White,
-                BorderThickness = new Thickness(0)
-            };
-            openButton.Click += (_, _) =>
-            {
-                try { Process.Start(new ProcessStartInfo(result.ReleaseUrl!) { UseShellExecute = true }); }
-                catch { /* no default browser handler - not fatal */ }
-            };
-            UpdateStatusPanel.Children.Add(openButton);
+            UpdateStatusText.Text = "";
+            new UpdateWindow(result) { Owner = this }.ShowDialog();
         }
         else
         {

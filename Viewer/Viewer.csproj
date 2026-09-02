@@ -10,6 +10,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Only for System.Windows.Forms.Clipboard.SetImage: WPF's own
+         Clipboard.SetImage writes a malformed DIB for pasting into non-WPF
+         apps (browsers included) - images come out skewed/garbled. WinForms'
+         GDI+-backed clipboard writer doesn't have that bug. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>BananaView</AssemblyName>
     <AssemblyTitle>BananaView</AssemblyTitle>
@@ -23,6 +28,16 @@
   <ItemGroup>
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.16.0" />
     <PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
+  </ItemGroup>
+
+  <!-- UseWindowsForms implicitly global-usings System.Windows.Forms and
+       System.Drawing, which collide with WPF's own System.Windows types
+       (Application, Point, Brush, ...) throughout the codebase - drop them
+       and require explicit System.Windows.Forms./System.Drawing. qualification
+       at the few call sites that actually need those namespaces. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
+using Viewer.Services;
 
 namespace Viewer.Loaders;
 
@@ -15,12 +16,11 @@ namespace Viewer.Loaders;
 // too. Reference: https://github.com/NothingData/ProcreateViewer.
 //
 // Timelapse video: Procreate can embed a recording of the drawing session as
-// several segment files (in recording order) inside the archive. Detecting
-// their presence here is just a name check (cheap - no bytes read), but
-// actually joining and playing them is deferred entirely until the user
-// presses Play (see EnsureJoinedVideo, called from MainWindow) - it's real
-// work (I/O + concatenation) that shouldn't happen just because a file was
-// opened.
+// several segment files inside the archive. Detecting their presence here is
+// just a name check (cheap - no bytes read); extracting them is deferred
+// entirely until the user presses Play (see EnsureVideoSegments, called from
+// MainWindow) - it's real work (I/O) that shouldn't happen just because a
+// file was opened.
 public sealed class ProcreateImageLoader : IImageLoader
 {
     private static readonly string[] VideoExtensions = { ".mov", ".mp4", ".m4v" };
@@ -61,36 +61,44 @@ public sealed class ProcreateImageLoader : IImageLoader
     private static ZipArchiveEntry? FindEntry(ZipArchive archive, string name) =>
         archive.Entries.FirstOrDefault(e => string.Equals(e.FullName, name, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Concatenates the recording's video segments (in the order they
-    /// appear in the archive - the user confirmed that's their recording
-    /// order) into one playable file, caching the result. Only ever called
-    /// from a Play button press, never during load.</summary>
-    public static string? EnsureJoinedVideo(string procreatePath)
+    /// <summary>Extracts every recording segment to its own cached file, in
+    /// natural filename order (segment-2 before segment-10), and returns
+    /// their paths in play order. Raw byte concatenation of independent
+    /// MOV/MP4 files does NOT produce a valid combined video - each segment
+    /// is its own complete container with its own index, so a player just
+    /// stops at the end of the first one and ignores the rest (the "only a
+    /// short part of one segment plays" bug). Playing the segments back to
+    /// back instead - MainWindow swaps MediaElement.Source on MediaEnded -
+    /// gives the same continuous-timelapse result without needing to
+    /// re-mux anything. Only ever called from a Play button press, never
+    /// during load.</summary>
+    public static string[] EnsureVideoSegments(string procreatePath)
     {
         using var archive = ZipFile.OpenRead(procreatePath);
         var segments = archive.Entries
             .Where(e => VideoExtensions.Contains(Path.GetExtension(e.FullName), StringComparer.OrdinalIgnoreCase))
+            .OrderBy(e => e.Name, NaturalStringComparer.Instance)
             .ToList();
-        if (segments.Count == 0) return null;
+        if (segments.Count == 0) return Array.Empty<string>();
 
-        var cacheDir = Path.Combine(Path.GetTempPath(), "ViewerProcreateVideo");
-        Directory.CreateDirectory(cacheDir);
         var stamp = File.GetLastWriteTimeUtc(procreatePath).Ticks;
-        var ext = Path.GetExtension(segments[0].FullName);
-        var outputPath = Path.Combine(cacheDir, $"{Path.GetFileNameWithoutExtension(procreatePath)}_{stamp}_joined{ext}");
+        var cacheDir = Path.Combine(Path.GetTempPath(), "ViewerProcreateVideo", $"{Path.GetFileNameWithoutExtension(procreatePath)}_{stamp}");
+        Directory.CreateDirectory(cacheDir);
 
-        if (File.Exists(outputPath)) return outputPath;
-
-        var tempPath = outputPath + ".tmp";
-        using (var outStream = File.Create(tempPath))
+        var paths = new string[segments.Count];
+        for (var i = 0; i < segments.Count; i++)
         {
-            foreach (var seg in segments)
+            var outputPath = Path.Combine(cacheDir, $"{i:D4}{Path.GetExtension(segments[i].FullName)}");
+            if (!File.Exists(outputPath))
             {
-                using var segStream = seg.Open();
-                segStream.CopyTo(outStream);
+                var tempPath = outputPath + ".tmp";
+                using (var outStream = File.Create(tempPath))
+                using (var segStream = segments[i].Open())
+                    segStream.CopyTo(outStream);
+                File.Move(tempPath, outputPath, overwrite: true);
             }
+            paths[i] = outputPath;
         }
-        File.Move(tempPath, outputPath, overwrite: true);
-        return outputPath;
+        return paths;
     }
 }

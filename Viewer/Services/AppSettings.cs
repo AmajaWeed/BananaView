@@ -14,6 +14,12 @@ public sealed class AppSettings
 
     public int ThumbnailSize { get; set; } = 100;
 
+    // "Пропустить версию" - never prompt about this specific version again.
+    public string? SkippedUpdateVersion { get; set; }
+
+    // "Отложить" - don't prompt again until this time passes (still checkable manually in Settings).
+    public DateTime? UpdatePostponedUntilUtc { get; set; }
+
     public static AppSettings Current { get; private set; } = Load();
 
     private static AppSettings Load()
