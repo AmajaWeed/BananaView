@@ -46,12 +46,19 @@ public partial class MainWindow : Window
     private string[] _videoSegments = Array.Empty<string>();
     private int _videoSegmentIndex;
     private bool _videoSeekBarUserDown;
+    private bool _wasPlayingBeforeSeek;
+    private int _seekPreviewIndex = -1;
+    private int _standbyPreloadedIndex = -1;
+    private MediaElement? _activeVideoPlayer;
+    private MediaElement? _standbyVideoPlayer;
     private readonly DispatcherTimer _videoProgressTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private LoadedImage? _currentImage;
 
     public MainWindow()
     {
         InitializeComponent();
+        _activeVideoPlayer = VideoPlayerA;
+        _standbyVideoPlayer = VideoPlayerB;
         _catalog = new FolderCatalog(_registry);
         _thumbCache = new ThumbnailCache(_registry, AppSettings.Current.ThumbnailSize);
         FilmstripList.ItemsSource = _vm.Items;
@@ -280,7 +287,9 @@ public partial class MainWindow : Window
         if (_currentImage == null) return;
         try
         {
-            Clipboard.SetImage(_currentImage.Preview);
+            using var jpegStream = ToJpegStream(_currentImage.Preview);
+            using var gdiBitmap = new System.Drawing.Bitmap(jpegStream);
+            SetClipboardImageForWebPaste(gdiBitmap);
         }
         catch
         {
@@ -312,26 +321,46 @@ public partial class MainWindow : Window
         if (_currentImage == null) return;
         try
         {
-            using var jpegStream = ToJpegStream(_currentImage.Preview);
+            using var jpegStream = ToJpegStream(_currentImage.Preview, maxDimension: 1600);
             using var gdiBitmap = new System.Drawing.Bitmap(jpegStream);
-            // System.Windows.Forms.Clipboard (GDI+-backed) writes a standard
-            // bottom-up DIB - unlike WPF's own Clipboard.SetImage, whose DIB
-            // header non-WPF apps (browsers included) often misread, producing
-            // a skewed/garbled paste.
-            System.Windows.Forms.Clipboard.SetImage(gdiBitmap);
+            SetClipboardImageForWebPaste(gdiBitmap);
         }
         catch { /* transiently locked - not fatal */ }
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { /* no default browser - not fatal */ }
         ShowToast("Изображение скопировано - вставьте его в поле поиска (Ctrl+V)");
     }
 
+    // Both System.Windows.Clipboard.SetImage and System.Windows.Forms.Clipboard
+    // .SetImage rely on .NET's own Bitmap<->clipboard-format conversion, which
+    // has proven unreliable when the receiver is a non-.NET app (a browser
+    // paste target reads nothing, or something garbled) - so this instead
+    // writes a byte-exact standard CF_DIB (the same bytes GetClipboardData
+    // (CF_DIB) would return from mspaint or the Snipping Tool) directly,
+    // alongside the normal Bitmap format and a temp-file drop for anything
+    // that only accepts a dropped/pasted file.
+    private static void SetClipboardImageForWebPaste(System.Drawing.Bitmap bitmap)
+    {
+        using var bmpStream = new MemoryStream();
+        bitmap.Save(bmpStream, System.Drawing.Imaging.ImageFormat.Bmp);
+        var bmpBytes = bmpStream.ToArray();
+        var dibBytes = bmpBytes[14..]; // strip the 14-byte BITMAPFILEHEADER; CF_DIB is everything after it
+
+        var tempPngPath = Path.Combine(Path.GetTempPath(), $"BananaView_search_{Guid.NewGuid():N}.png");
+        bitmap.Save(tempPngPath, System.Drawing.Imaging.ImageFormat.Png);
+
+        var data = new System.Windows.Forms.DataObject();
+        data.SetData(System.Windows.Forms.DataFormats.Dib, new MemoryStream(dibBytes));
+        data.SetImage(bitmap);
+        data.SetFileDropList(new System.Collections.Specialized.StringCollection { tempPngPath });
+        System.Windows.Forms.Clipboard.SetDataObject(data, copy: true);
+    }
+
     // Image-search paste boxes expect an ordinary photo, not a multi-thousand-
     // pixel original or an alpha-channel PNG - so this downscales oversized
     // images and round-trips through JPEG (flattening any transparency onto
     // white, since JPEG has none) before it ever reaches the clipboard.
-    private static MemoryStream ToJpegStream(BitmapSource source)
+    private static MemoryStream ToJpegStream(BitmapSource source, int maxDimension = 4000)
     {
-        const int maxDimension = 1600;
         BitmapSource scaled = source;
         var maxSide = Math.Max(source.PixelWidth, source.PixelHeight);
         if (maxSide > maxDimension)
@@ -389,7 +418,7 @@ public partial class MainWindow : Window
         {
             if (_videoPlaying)
             {
-                VideoPlayer.Pause();
+                _activeVideoPlayer!.Pause();
                 _videoPlaying = false;
                 PlayButton.Content = PlayGlyph;
                 return;
@@ -418,13 +447,17 @@ public partial class MainWindow : Window
                 _videoSegments = segments;
                 _videoSegmentIndex = 0;
                 VideoBackdrop.Visibility = Visibility.Visible;
-                VideoPlayer.Visibility = Visibility.Visible;
-                VideoPlayer.Source = new Uri(_videoSegments[0]);
+                _activeVideoPlayer!.Visibility = Visibility.Visible;
+                _standbyVideoPlayer!.Visibility = Visibility.Visible;
+                _activeVideoPlayer.Opacity = 1;
+                _standbyVideoPlayer.Opacity = 0;
+                StartSegment(_activeVideoPlayer, 0, play: false);
+                PreloadStandbySegment();
                 VideoSeekBar.Maximum = _videoSegments.Length;
                 VideoSeekBar.Visibility = Visibility.Visible;
             }
 
-            VideoPlayer.Play();
+            _activeVideoPlayer!.Play();
             _videoPlaying = true;
             _videoProgressTimer.Start();
             PlayButton.Content = PauseGlyph;
@@ -435,15 +468,60 @@ public partial class MainWindow : Window
         PlayButton.Content = Canvas.IsGifPaused ? PlayGlyph : PauseGlyph;
     }
 
+    private void StartSegment(MediaElement player, int index, bool play)
+    {
+        player.Source = new Uri(_videoSegments[index]);
+        if (play) player.Play();
+    }
+
+    // Loads the next segment into the standby player ahead of time, so the
+    // cut at MediaEnded is just an opacity swap between two already-ready
+    // players instead of a fresh Source load (which is what caused the black
+    // flash on every cut). MediaOpened primes it (Play, then immediately
+    // Pause) since MediaElement doesn't reliably render a first frame until
+    // Play() has been called at least once.
+    private void PreloadStandbySegment()
+    {
+        if (_videoSegments.Length <= 1) return;
+        var nextIndex = (_videoSegmentIndex + 1) % _videoSegments.Length;
+        if (_standbyPreloadedIndex == nextIndex) return;
+        _standbyPreloadedIndex = nextIndex;
+        StartSegment(_standbyVideoPlayer!, nextIndex, play: false);
+    }
+
+    private void SwapActiveStandby()
+    {
+        (_activeVideoPlayer, _standbyVideoPlayer) = (_standbyVideoPlayer, _activeVideoPlayer);
+        _activeVideoPlayer!.Opacity = 1;
+        _standbyVideoPlayer!.Opacity = 0;
+        _standbyVideoPlayer.Pause();
+        _standbyPreloadedIndex = -1;
+    }
+
     // Segments are independent MOV/MP4 containers (see EnsureVideoSegments) -
     // "one continuous timelapse" comes from playing them back to back here,
     // not from any file-level joining.
     private void VideoPlayer_MediaEnded(object sender, RoutedEventArgs e)
     {
-        _videoSegmentIndex++;
-        if (_videoSegmentIndex >= _videoSegments.Length) _videoSegmentIndex = 0; // loop the whole sequence
-        VideoPlayer.Source = new Uri(_videoSegments[_videoSegmentIndex]);
-        VideoPlayer.Play();
+        if (sender != _activeVideoPlayer) return; // stray event from the standby player - ignore
+
+        var nextIndex = (_videoSegmentIndex + 1) % _videoSegments.Length;
+        if (_standbyPreloadedIndex == nextIndex)
+        {
+            SwapActiveStandby();
+            _videoSegmentIndex = nextIndex;
+            _activeVideoPlayer!.Play();
+        }
+        else
+        {
+            // Preload didn't catch up in time (segment shorter than the
+            // preload could finish, or the very first cut) - fall back to a
+            // direct switch; may flash once, but playback still advances.
+            _videoSegmentIndex = nextIndex;
+            StartSegment(_activeVideoPlayer!, nextIndex, play: true);
+        }
+
+        PreloadStandbySegment();
     }
 
     private TimeSpan? _videoSegmentDuration;
@@ -451,10 +529,19 @@ public partial class MainWindow : Window
 
     private void VideoPlayer_MediaOpened(object sender, RoutedEventArgs e)
     {
-        _videoSegmentDuration = VideoPlayer.NaturalDuration.HasTimeSpan ? VideoPlayer.NaturalDuration.TimeSpan : null;
+        var player = (MediaElement)sender;
+        if (player == _standbyVideoPlayer)
+        {
+            // Prime it: forces the first frame to actually render, then hold there.
+            player.Play();
+            player.Pause();
+            return;
+        }
+
+        _videoSegmentDuration = player.NaturalDuration.HasTimeSpan ? player.NaturalDuration.TimeSpan : null;
         if (_pendingSeekFraction is { } fraction && _videoSegmentDuration is { } duration)
         {
-            VideoPlayer.Position = TimeSpan.FromSeconds(duration.TotalSeconds * fraction);
+            player.Position = TimeSpan.FromSeconds(duration.TotalSeconds * fraction);
         }
         _pendingSeekFraction = null;
     }
@@ -464,43 +551,85 @@ public partial class MainWindow : Window
         if (_videoSeekBarUserDown || _videoSegments.Length == 0) return;
         var fraction = 0.0;
         if (_videoSegmentDuration is { TotalSeconds: > 0 } duration)
-            fraction = VideoPlayer.Position.TotalSeconds / duration.TotalSeconds;
+            fraction = _activeVideoPlayer!.Position.TotalSeconds / duration.TotalSeconds;
         VideoSeekBar.Value = _videoSegmentIndex + Math.Clamp(fraction, 0, 1);
     }
 
-    private void VideoSeekBar_PreviewMouseDown(object sender, MouseButtonEventArgs e) => _videoSeekBarUserDown = true;
+    private void VideoSeekBar_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_videoSegments.Length == 0) return;
+        _videoSeekBarUserDown = true;
+        _wasPlayingBeforeSeek = _videoPlaying;
+        _activeVideoPlayer!.Pause();
+        _seekPreviewIndex = -1;
+    }
 
-    private void VideoSeekBar_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    // Live preview while dragging - so the user can see roughly where
+    // they're scrubbing to, not just find out after releasing. This bypasses
+    // the preload optimization (it directly reassigns the active player's
+    // Source), so it can flash/stutter during the drag itself - acceptable
+    // for an explicit interactive scrub, unlike normal playback.
+    private void VideoSeekBar_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (!_videoSeekBarUserDown || _videoSegments.Length == 0) return;
-        _videoSeekBarUserDown = false;
+        PreviewSeek(e.NewValue);
+    }
 
-        var value = Math.Clamp(VideoSeekBar.Value, 0, _videoSegments.Length - 0.001);
+    private void PreviewSeek(double value)
+    {
+        value = Math.Clamp(value, 0, _videoSegments.Length - 0.001);
         var targetIndex = (int)Math.Floor(value);
         var fraction = value - targetIndex;
 
-        if (targetIndex == _videoSegmentIndex && _videoSegmentDuration is { } duration)
+        if (targetIndex != _seekPreviewIndex)
         {
-            VideoPlayer.Position = TimeSpan.FromSeconds(duration.TotalSeconds * fraction);
-        }
-        else
-        {
-            _videoSegmentIndex = targetIndex;
+            _seekPreviewIndex = targetIndex;
             _pendingSeekFraction = fraction;
-            VideoPlayer.Source = new Uri(_videoSegments[targetIndex]);
-            if (_videoPlaying) VideoPlayer.Play();
+            StartSegment(_activeVideoPlayer!, targetIndex, play: false);
+        }
+        else if (_videoSegmentDuration is { } duration)
+        {
+            _activeVideoPlayer!.Position = TimeSpan.FromSeconds(duration.TotalSeconds * fraction);
+        }
+    }
+
+    private void VideoSeekBar_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_videoSeekBarUserDown) return;
+        _videoSeekBarUserDown = false;
+        if (_videoSegments.Length == 0) return;
+
+        PreviewSeek(VideoSeekBar.Value);
+        _videoSegmentIndex = _seekPreviewIndex;
+        _seekPreviewIndex = -1;
+
+        _standbyPreloadedIndex = -1;
+        PreloadStandbySegment();
+
+        if (_wasPlayingBeforeSeek)
+        {
+            _activeVideoPlayer!.Play();
+            _videoPlaying = true;
         }
     }
 
     private void StopVideoPlayback()
     {
-        if (VideoPlayer.Source != null)
+        foreach (var player in new[] { VideoPlayerA, VideoPlayerB })
         {
-            VideoPlayer.Stop();
-            VideoPlayer.Close();
-            VideoPlayer.Source = null;
+            if (player.Source != null)
+            {
+                player.Stop();
+                player.Close();
+                player.Source = null;
+            }
+            player.Visibility = Visibility.Collapsed;
+            player.Opacity = 0;
         }
-        VideoPlayer.Visibility = Visibility.Collapsed;
+        _activeVideoPlayer = VideoPlayerA;
+        _standbyVideoPlayer = VideoPlayerB;
+        _standbyPreloadedIndex = -1;
+
         VideoBackdrop.Visibility = Visibility.Collapsed;
         VideoSeekBar.Visibility = Visibility.Collapsed;
         _videoProgressTimer.Stop();
