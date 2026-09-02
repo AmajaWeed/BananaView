@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Viewer.Loaders;
 using Viewer.Services;
@@ -286,9 +287,51 @@ public partial class MainWindow : Window
     private void SearchByImage(string url)
     {
         if (_currentImage == null) return;
-        try { Clipboard.SetImage(_currentImage.Preview); } catch { /* transiently locked - not fatal */ }
+        try { Clipboard.SetImage(ToJpegClipboardImage(_currentImage.Preview)); }
+        catch { /* transiently locked - not fatal */ }
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { /* no default browser - not fatal */ }
         ShowToast("Изображение скопировано - вставьте его в поле поиска (Ctrl+V)");
+    }
+
+    // Image-search paste boxes expect an ordinary photo, not a multi-thousand-
+    // pixel original or an alpha-channel PNG - so this downscales oversized
+    // images and round-trips through JPEG (flattening any transparency onto
+    // white, since JPEG has none) before it ever reaches the clipboard.
+    private static BitmapSource ToJpegClipboardImage(BitmapSource source)
+    {
+        const int maxDimension = 2000;
+        BitmapSource scaled = source;
+        var maxSide = Math.Max(source.PixelWidth, source.PixelHeight);
+        if (maxSide > maxDimension)
+        {
+            var scale = (double)maxDimension / maxSide;
+            var transformed = new TransformedBitmap(source, new ScaleTransform(scale, scale));
+            transformed.Freeze();
+            scaled = transformed;
+        }
+
+        var flattened = new DrawingVisual();
+        using (var dc = flattened.RenderOpen())
+        {
+            dc.DrawRectangle(System.Windows.Media.Brushes.White, null, new Rect(0, 0, scaled.PixelWidth, scaled.PixelHeight));
+            dc.DrawImage(scaled, new Rect(0, 0, scaled.PixelWidth, scaled.PixelHeight));
+        }
+        var rendered = new RenderTargetBitmap(scaled.PixelWidth, scaled.PixelHeight, scaled.DpiX, scaled.DpiY, PixelFormats.Pbgra32);
+        rendered.Render(flattened);
+
+        var jpegEncoder = new JpegBitmapEncoder { QualityLevel = 90 };
+        jpegEncoder.Frames.Add(BitmapFrame.Create(rendered));
+        using var ms = new MemoryStream();
+        jpegEncoder.Save(ms);
+        ms.Position = 0;
+
+        var jpegDecoded = new BitmapImage();
+        jpegDecoded.BeginInit();
+        jpegDecoded.CacheOption = BitmapCacheOption.OnLoad;
+        jpegDecoded.StreamSource = ms;
+        jpegDecoded.EndInit();
+        jpegDecoded.Freeze();
+        return jpegDecoded;
     }
 
     // Delegates to the OS's own "Open with" picker rather than building a
