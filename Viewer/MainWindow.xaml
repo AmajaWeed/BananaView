@@ -141,6 +141,11 @@
                 </ListBox>
                 </Border>
 
+                <Border Background="#CC101010" Padding="0,3">
+                    <TextBlock x:Name="FileNameText" HorizontalAlignment="Center" FontSize="11"
+                               Foreground="#CCCCCC" TextTrimming="CharacterEllipsis"/>
+                </Border>
+
                 <Border Background="#CC101010" Padding="5,3">
                     <Grid>
                         <Grid.ColumnDefinitions>

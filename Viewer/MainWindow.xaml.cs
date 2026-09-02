@@ -167,6 +167,7 @@ public partial class MainWindow : Window
             Canvas.SetImage(image, direction);
             _currentImage = image;
             _procreateVideoSourcePath = image.ProcreateVideoSourcePath;
+            FileNameText.Text = Path.GetFileName(path);
 
             // Play/pause is for animated content: a gif animates in-place; a
             // Procreate timelapse plays in-app, its segments joined lazily on
@@ -392,15 +393,20 @@ public partial class MainWindow : Window
 
             mask.Children.Add(new RectangleGeometry(screenRect));
 
+            // A solid dark backing (not a see-through hole) so white text stays
+            // readable regardless of what's underneath - a bright/busy image
+            // made the transparent-hole version unreadable.
             var box = new TextBox
             {
                 Text = line.Text,
                 IsReadOnly = true,
                 BorderThickness = new Thickness(0),
-                Background = System.Windows.Media.Brushes.Transparent,
+                Background = new SolidColorBrush(Color.FromArgb(0xF0, 0x10, 0x10, 0x10)),
                 Foreground = System.Windows.Media.Brushes.White,
+                CaretBrush = System.Windows.Media.Brushes.White,
+                SelectionBrush = new SolidColorBrush(Color.FromArgb(0x88, 0x4A, 0x9E, 0xFF)),
                 FontSize = Math.Clamp(screenRect.Height * 0.7, 8, 72),
-                Padding = new Thickness(0),
+                Padding = new Thickness(2, 0, 2, 0),
                 VerticalContentAlignment = VerticalAlignment.Center,
                 TextWrapping = TextWrapping.NoWrap,
                 Width = screenRect.Width,
