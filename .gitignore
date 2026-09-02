@@ -1,0 +1,13 @@
+bin/
+obj/
+installer/output/
+publish/
+*.user
+
+# Debug/diagnostic dumps from development, not project source.
+/screenshot*.png
+/selfcheck*.png
+/sample_psd_check.png
+
+# Personal test artwork - not meant for the public repo.
+/TestImages/

@@ -1,0 +1,42 @@
+<Window x:Class="Viewer.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="О программе" Height="260" Width="360"
+        WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        AllowsTransparency="True" Background="Transparent" Foreground="White">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0"/>
+    </shell:WindowChrome.WindowChrome>
+    <Border Background="#FF1C1C1C" CornerRadius="8" BorderBrush="#33FFFFFF" BorderThickness="1"
+            MouseLeftButtonDown="Border_MouseLeftButtonDown">
+        <Grid Margin="24,20,24,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Image Grid.Row="0" Source="Resources/AppIcon.ico" Width="48" Height="48" HorizontalAlignment="Center"/>
+
+            <TextBlock Grid.Row="1" Text="BananaView" FontSize="18" FontWeight="Bold"
+                       HorizontalAlignment="Center" Margin="0,10,0,2"/>
+
+            <TextBlock x:Name="VersionText" Grid.Row="2" FontSize="12" Foreground="#AAAAAA"
+                       HorizontalAlignment="Center" Margin="0,0,0,12"/>
+
+            <StackPanel x:Name="UpdateStatusPanel" Grid.Row="3" VerticalAlignment="Center">
+                <TextBlock x:Name="UpdateStatusText" FontSize="12" Foreground="#CCCCCC"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                <Button x:Name="CheckUpdateButton" Content="Проверить обновления" Click="CheckUpdate_Click"
+                        Padding="12,6" Margin="0,0,8,0" Background="#2A2A2A" Foreground="White" BorderThickness="0"/>
+                <Button Content="Закрыть" Click="Close_Click" Padding="12,6" Background="#2A2A2A" Foreground="White" BorderThickness="0"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

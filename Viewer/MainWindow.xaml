@@ -1,0 +1,181 @@
+<Window x:Class="Viewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:views="clr-namespace:Viewer.Views"
+        Title="BananaView" Icon="Resources/AppIcon.ico"
+        WindowStyle="None" ResizeMode="NoResize" WindowState="Maximized"
+        AllowsTransparency="True" Background="Transparent" Foreground="White"
+        AllowDrop="True" Drop="Window_Drop"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        MouseMove="Window_MouseMove"
+        Loaded="Window_Loaded">
+    <!-- CaptionHeight=0: we drag/resize the window ourselves (TitleBar_MouseLeftButtonDown
+         + this), so WindowChrome is only here to give a WindowStyle="None" window real
+         edge/corner resize-drag hit-testing, which ResizeMode alone does not provide. -->
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0"/>
+    </shell:WindowChrome.WindowChrome>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition x:Name="TitleRow" Height="0"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Classic title bar - hidden (Height=0) by default in fullscreen Picasa
+             mode, shown after the user clicks the background to drop into a
+             normal window. -->
+        <Grid Grid.Row="0" Background="#FF141414"
+              MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <TextBlock Text="BananaView" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="10,0,0,0" FontSize="12"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="&#xE946;" Click="About_Click" Style="{StaticResource TitleBarButton}" ToolTip="О программе"/>
+                <Button x:Name="TitlePinButton" Click="Pin_Click" Style="{StaticResource TitleBarButton}" ToolTip="Поверх всех окон"/>
+                <Button Content="&#xE921;" Click="Minimize_Click" Style="{StaticResource TitleBarButton}" ToolTip="Свернуть"/>
+                <Button Content="&#xE922;" Click="Maximize_Click" Style="{StaticResource TitleBarButton}" ToolTip="Развернуть"/>
+                <Button Content="&#xE8BB;" Click="Close_Click" Style="{StaticResource TitleBarButton}" ToolTip="Закрыть"/>
+            </StackPanel>
+        </Grid>
+
+        <Grid x:Name="ContentGrid" Grid.Row="1" Background="#66000000">
+            <views:ImageCanvas x:Name="Canvas" BackgroundClicked="Canvas_BackgroundClicked"/>
+
+            <!-- Procreate timelapse playback - overlaid on top of the still
+                 image, shown only while actually playing. -->
+            <MediaElement x:Name="VideoPlayer" Visibility="Collapsed" Stretch="Uniform"
+                          LoadedBehavior="Manual" UnloadedBehavior="Manual"
+                          MediaEnded="VideoPlayer_MediaEnded" IsHitTestVisible="False"/>
+
+            <TextBlock x:Name="EmptyHint" Text="Перетащите изображение сюда или откройте через 'Открыть с помощью'"
+                       Foreground="#777777" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       FontSize="16" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420" IsHitTestVisible="False"/>
+
+            <!-- Busy spinner - video segment joining, OCR. Both are on-demand,
+                 potentially slow (I/O or CPU-bound) operations kicked off by a
+                 button press, so there needs to be *some* feedback while they run. -->
+            <Grid x:Name="LoadingOverlay" Visibility="Collapsed" Background="#88000000">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Path Width="40" Height="40" Stroke="White" StrokeThickness="4"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                          Data="M 20,3 A 17,17 0 1 1 3,20">
+                        <Path.RenderTransform>
+                            <RotateTransform x:Name="SpinnerRotate" CenterX="20" CenterY="20"/>
+                        </Path.RenderTransform>
+                    </Path>
+                    <TextBlock x:Name="LoadingText" Foreground="White" FontSize="12" Margin="0,10,0,0"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Grid>
+
+            <Border x:Name="ToastBorder" Background="#DD222222" CornerRadius="6" Padding="14,8"
+                    HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,50,0,0"
+                    Opacity="0" IsHitTestVisible="False">
+                <TextBlock x:Name="ToastText" Foreground="White" FontSize="13"/>
+            </Border>
+
+            <!-- Top-right overlay: close (fullscreen mode only - windowed mode uses the title bar's close button) -->
+            <StackPanel x:Name="TopOverlayPanel" Orientation="Horizontal" VerticalAlignment="Top" HorizontalAlignment="Right" Opacity="0">
+                <Button x:Name="TopPinButton" Click="Pin_Click" Style="{StaticResource ToolbarButton}" ToolTip="Поверх всех окон" Margin="8,8,0,8"/>
+                <Button Content="&#xE8BB;" Click="Close_Click" Style="{StaticResource ToolbarButton}" ToolTip="Закрыть (Esc)" Margin="4,8,8,8"/>
+            </StackPanel>
+
+            <!-- Bottom overlay: filmstrip + toolbar -->
+            <StackPanel x:Name="OverlayPanel" VerticalAlignment="Bottom" Opacity="0">
+                <!-- Outer Border hard-clips regardless of the ListBox's own theme chrome/padding,
+                     which is what was letting thumbnails visually spill out above the bar. -->
+                <Border Height="32" ClipToBounds="True" Background="#CC101010">
+                <ListBox x:Name="FilmstripList" Background="Transparent" BorderThickness="0" Padding="0"
+                         ClipToBounds="True"
+                         ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                         SelectionChanged="FilmstripList_SelectionChanged">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom"/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <!-- No frame: square, cropped-to-fill thumbnail; current item is highlighted by
+                                 full opacity, everything else is dimmed instead of boxed. -->
+                            <Grid Width="22" Height="22" Margin="1.5" ClipToBounds="True">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Opacity" Value="0.55"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                <Setter Property="Opacity" Value="1"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"
+                                       RenderOptions.BitmapScalingMode="Linear"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                </Border>
+
+                <Border Background="#CC101010" Padding="5,3">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Zoom hugs the left side of the arrows, but the arrows themselves (column 1)
+                             stay exactly centered on the whole bar regardless: column 0 and column 2 are
+                             equal-weight star columns, so an Auto column between them always sits at the
+                             true midpoint no matter how wide either side's content is. -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="&#xE738;" Click="ZoomOut_Click" Style="{StaticResource ToolbarButton}" ToolTip="Уменьшить"/>
+                            <Button Content="&#xE9A6;" Click="Fit_Click" Style="{StaticResource ToolbarButton}" ToolTip="По размеру окна"/>
+                            <Button Content="&#xE710;" Click="ZoomIn_Click" Style="{StaticResource ToolbarButton}" ToolTip="Увеличить"/>
+                            <Separator Style="{StaticResource ToolbarSeparator}"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Button Content="&#xE892;" Click="Prev_Click" Style="{StaticResource BigNavToolbarButton}" ToolTip="Предыдущее"/>
+                            <Button x:Name="PlayButton" Content="&#xE768;" Click="Play_Click" Style="{StaticResource NavToolbarButton}" ToolTip="Анимация / видео" Visibility="Collapsed"/>
+                            <Button Content="&#xE893;" Click="Next_Click" Style="{StaticResource BigNavToolbarButton}" ToolTip="Следующее"/>
+                        </StackPanel>
+
+                        <DockPanel Grid.Column="2" LastChildFill="False" VerticalAlignment="Center">
+                            <Button DockPanel.Dock="Right" Content="&#xE74D;" Click="Delete_Click"
+                                    Style="{StaticResource DeleteToolbarButton}" Margin="16,0,4,0" ToolTip="Удалить (в корзину)"/>
+                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" HorizontalAlignment="Left">
+                                <Separator Style="{StaticResource ToolbarSeparator}"/>
+                                <Button Content="&#xE7AD;" Click="RotateCW_Click" Style="{StaticResource ToolbarButton}" ToolTip="Повернуть по часовой"/>
+                                <Button Content="&#xE7AD;" Click="RotateCCW_Click" Style="{StaticResource ToolbarButton}" ToolTip="Повернуть против часовой">
+                                    <Button.RenderTransform>
+                                        <ScaleTransform ScaleX="-1"/>
+                                    </Button.RenderTransform>
+                                    <Button.RenderTransformOrigin>0.5,0.5</Button.RenderTransformOrigin>
+                                </Button>
+                                <Separator Style="{StaticResource ToolbarSeparator}"/>
+                                <Button Content="&#xE8C8;" Click="Copy_Click" Style="{StaticResource ToolbarButton}" ToolTip="Копировать в буфер обмена"/>
+                                <Button Content="&#xE736;" Click="Ocr_Click" Style="{StaticResource ToolbarButton}" ToolTip="Распознать текст на изображении (OCR) и скопировать в буфер обмена"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
