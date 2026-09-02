@@ -417,6 +417,7 @@ public partial class MainWindow : Window
 
                 _videoSegments = segments;
                 _videoSegmentIndex = 0;
+                VideoBackdrop.Visibility = Visibility.Visible;
                 VideoPlayer.Visibility = Visibility.Visible;
                 VideoPlayer.Source = new Uri(_videoSegments[0]);
                 VideoSeekBar.Maximum = _videoSegments.Length;
@@ -500,6 +501,7 @@ public partial class MainWindow : Window
             VideoPlayer.Source = null;
         }
         VideoPlayer.Visibility = Visibility.Collapsed;
+        VideoBackdrop.Visibility = Visibility.Collapsed;
         VideoSeekBar.Visibility = Visibility.Collapsed;
         _videoProgressTimer.Stop();
         _videoPlaying = false;

@@ -42,7 +42,13 @@
             <views:ImageCanvas x:Name="Canvas" BackgroundClicked="Canvas_BackgroundClicked"/>
 
             <!-- Procreate timelapse playback - overlaid on top of the still
-                 image, shown only while actually playing. -->
+                 image, shown only while actually playing. Opaque backdrop
+                 sits between the still image and the video: without it, the
+                 still shows through during the brief gap at every segment
+                 switch (MediaElement renders nothing for a moment), and - since
+                 the video itself doesn't hit-test - clicks/drags would reach
+                 the still image underneath and pan it while the video plays. -->
+            <Border x:Name="VideoBackdrop" Background="Black" Visibility="Collapsed"/>
             <MediaElement x:Name="VideoPlayer" Visibility="Collapsed" Stretch="Uniform"
                           LoadedBehavior="Manual" UnloadedBehavior="Manual"
                           MediaEnded="VideoPlayer_MediaEnded" MediaOpened="VideoPlayer_MediaOpened"
