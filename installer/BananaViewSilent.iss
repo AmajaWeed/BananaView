@@ -10,7 +10,7 @@
 // For the version with a directory picker and a per-format association
 // picker, see BananaView.iss.
 #define MyAppName "BananaView"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "BananaView"
 #define MyAppExeName "BananaView.exe"
 #define MyAppIcoName "AppIcon.ico"
