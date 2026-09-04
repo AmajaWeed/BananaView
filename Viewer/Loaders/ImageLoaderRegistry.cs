@@ -16,6 +16,8 @@ public sealed class ImageLoaderRegistry
         new MagickImageLoader(),
         new ProcreateImageLoader(),
         new Sai2ImageLoader(),
+        new KritaImageLoader(),
+        new ClipImageLoader(),
     };
 
     public bool IsSupported(string extension) => _loaders.Any(l => l.CanLoad(extension));

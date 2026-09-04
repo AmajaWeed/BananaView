@@ -1,5 +1,5 @@
 #define MyAppName "BananaView"
-#define MyAppVersion "1.1.3"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "BananaView"
 #define MyAppExeName "BananaView.exe"
 #define MyAppIcoName "AppIcon.ico"
@@ -131,6 +131,9 @@ begin
   AddFormat('.psd', 'PSD', 'psd.bmp', True);
   AddFormat('.procreate', 'Procreate', 'procreate.bmp', True);
   AddFormat('.sai2', 'SAI2', 'sai2.bmp', True);
+  AddFormat('.kra', 'Krita', 'kra.bmp', False);
+  AddFormat('.clip', 'CLIP STUDIO', 'clip.bmp', False);
+  AddFormat('.avif', 'AVIF', 'avif.bmp', False);
 
   FormatsPage := CreateCustomPage(wpSelectTasks, 'Ассоциации файлов',
     'Выберите, какие форматы изображений будет открывать BananaView по умолчанию');

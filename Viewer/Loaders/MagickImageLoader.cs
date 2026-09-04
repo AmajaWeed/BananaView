@@ -19,7 +19,7 @@ public sealed class MagickImageLoader : IImageLoader
 {
     private static readonly HashSet<string> Extensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".psd", ".webp", ".heic", ".heif", ".ico"
+        ".psd", ".webp", ".heic", ".heif", ".ico", ".avif"
     };
 
     // Formats where the file holds multiple sizes/frames and we want the

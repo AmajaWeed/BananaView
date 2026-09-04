@@ -1,0 +1,64 @@
+name: Release
+
+# Builds both installers and the update zip, then publishes them to a
+# GitHub Release - triggered by pushing a tag like v1.2.0. Doing this in CI
+# instead of by hand (as every release up to 1.1.3 was) means the tag,
+# the app's own <Version>, and what's actually in the release asset can't
+# drift out of sync with each other.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow (for installer/gen_icons.py)
+        run: pip install pillow
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Publish app
+        run: dotnet publish Viewer/Viewer.csproj -c Release -r win-x64 --self-contained false -o publish
+
+      - name: Publish thumbnail handler
+        run: dotnet publish Viewer.ThumbnailProvider/Viewer.ThumbnailProvider.csproj -c Release -o publish
+
+      - name: Generate installer format-picker icons
+        run: python installer/gen_icons.py
+
+      - name: Build installers
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\BananaView.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\BananaViewSilent.iss
+        shell: pwsh
+
+      - name: Zip update package
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          Compress-Archive -Path 'publish\*' -DestinationPath "BananaView-$version-win-x64.zip" -CompressionLevel Optimal
+        shell: pwsh
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            BananaView-*-win-x64.zip `
+            installer\output\BananaView-Setup.exe `
+            installer\output\BananaView-Setup-Quiet.exe `
+            --title "BananaView ${{ github.ref_name }}" `
+            --generate-notes
+        shell: pwsh

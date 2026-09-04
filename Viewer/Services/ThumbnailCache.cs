@@ -145,6 +145,35 @@ public sealed class ThumbnailCache
             return Downscale(decoder.Frames[0]);
         }
 
+        if (string.Equals(ext, ".kra", StringComparison.OrdinalIgnoreCase))
+        {
+            using var archive = ZipFile.OpenRead(path);
+            var entry =
+                archive.Entries.FirstOrDefault(e => string.Equals(e.FullName, "preview.png", StringComparison.OrdinalIgnoreCase)) ??
+                archive.Entries.FirstOrDefault(e => string.Equals(e.FullName, "mergedimage.png", StringComparison.OrdinalIgnoreCase));
+            if (entry == null) return null;
+
+            using var entryStream = entry.Open();
+            var decoder = new PngBitmapDecoder(entryStream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            return Downscale(decoder.Frames[0]);
+        }
+
+        if (string.Equals(ext, ".clip", StringComparison.OrdinalIgnoreCase))
+        {
+            var png = ClipImageLoader.ExtractPreviewPng(path);
+            if (png == null) return null;
+
+            var clipBmp = new BitmapImage();
+            using (var ms = new MemoryStream(png))
+            {
+                clipBmp.BeginInit();
+                clipBmp.CacheOption = BitmapCacheOption.OnLoad;
+                clipBmp.StreamSource = ms;
+                clipBmp.EndInit();
+            }
+            return Downscale(clipBmp);
+        }
+
         if (string.Equals(ext, ".sai2", StringComparison.OrdinalIgnoreCase))
         {
             var decoded = Sai2NativeDecoder.DecodeFlattened(path);

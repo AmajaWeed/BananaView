@@ -297,37 +297,63 @@ public partial class MainWindow : Window
         }
     }
     // Neither Google nor Yandex offer a no-account "search by local file" API,
-    // but both search-by-image pages accept a pasted image in their search
-    // box - so this copies the current image to the clipboard (like Copy_Click)
-    // and opens the picked engine in the user's default browser; the user
-    // finishes with one Ctrl+V.
+    // but both accept a direct image upload to their own search-by-image
+    // endpoint (reverse-engineered from the dessant/search-by-image browser
+    // extension's source, since a Ctrl+V-into-search-box approach proved
+    // unreliable) - so this uploads the image directly and opens the results
+    // page itself, no manual paste step needed.
     private void SearchImage_Click(object sender, RoutedEventArgs e)
     {
         if (_currentImage == null) return;
 
         var menu = new ContextMenu();
         var google = new MenuItem { Header = "Google Lens" };
-        google.Click += (_, _) => SearchByImage("https://lens.google.com/");
+        google.Click += (_, _) => _ = SearchByImageAsync(isGoogle: true);
         var yandex = new MenuItem { Header = "Яндекс.Картинки" };
-        yandex.Click += (_, _) => SearchByImage("https://yandex.ru/images/");
+        yandex.Click += (_, _) => _ = SearchByImageAsync(isGoogle: false);
         menu.Items.Add(google);
         menu.Items.Add(yandex);
         menu.PlacementTarget = SearchImageButton;
         menu.IsOpen = true;
     }
 
-    private void SearchByImage(string url)
+    private async Task SearchByImageAsync(bool isGoogle)
     {
         if (_currentImage == null) return;
+
+        ShowLoading("Загрузка изображения для поиска...");
         try
         {
-            using var jpegStream = ToJpegStream(_currentImage.Preview, maxDimension: 1600);
-            using var gdiBitmap = new System.Drawing.Bitmap(jpegStream);
-            SetClipboardImageForWebPaste(gdiBitmap);
+            byte[] jpegBytes;
+            using (var jpegStream = ToJpegStream(_currentImage.Preview, maxDimension: 1600))
+                jpegBytes = jpegStream.ToArray();
+
+            var resultUrl = isGoogle
+                ? await SearchByImageService.SearchGoogleAsync(jpegBytes)
+                : await SearchByImageService.SearchYandexAsync(jpegBytes);
+
+            Process.Start(new ProcessStartInfo(resultUrl) { UseShellExecute = true });
         }
-        catch { /* transiently locked - not fatal */ }
-        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { /* no default browser - not fatal */ }
-        ShowToast("Изображение скопировано - вставьте его в поле поиска (Ctrl+V)");
+        catch (Exception ex)
+        {
+            // Fall back to the old copy-and-paste path rather than leaving
+            // the user with nothing if the upload itself failed (network
+            // hiccup, the endpoint changed shape, etc).
+            try
+            {
+                using var jpegStream = ToJpegStream(_currentImage.Preview, maxDimension: 1600);
+                using var gdiBitmap = new System.Drawing.Bitmap(jpegStream);
+                SetClipboardImageForWebPaste(gdiBitmap);
+                var fallbackUrl = isGoogle ? "https://images.google.com/" : "https://yandex.ru/images/";
+                Process.Start(new ProcessStartInfo(fallbackUrl) { UseShellExecute = true });
+                ShowToast($"Не удалось загрузить напрямую ({ex.Message}) - изображение скопировано, вставьте его вручную (Ctrl+V)");
+            }
+            catch { /* clipboard transiently locked, or no default browser - not fatal */ }
+        }
+        finally
+        {
+            HideLoading();
+        }
     }
 
     // Both System.Windows.Clipboard.SetImage and System.Windows.Forms.Clipboard
@@ -403,6 +429,53 @@ public partial class MainWindow : Window
         {
             // No shell32 OpenAs handler available - not fatal.
         }
+    }
+
+    private void Rename_Click(object sender, RoutedEventArgs e)
+    {
+        var path = _catalog.CurrentFile;
+        if (path == null) return;
+
+        var dialog = new RenameWindow(path) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.NewPath == null) return;
+        if (string.Equals(dialog.NewPath, path, StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            File.Move(path, dialog.NewPath);
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Не удалось переименовать: {ex.Message}");
+            return;
+        }
+
+        // Re-scan the folder rather than patch state in place - simplest way
+        // to keep the catalog/filmstrip sort order and current-index tracking
+        // correct after the filename (and therefore sort position) changed.
+        _catalog.LoadFolder(dialog.NewPath);
+        RebuildFilmstrip();
+        LoadCurrentAsync(0);
+    }
+
+    private void Print_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentImage == null) return;
+
+        var dialog = new System.Windows.Controls.PrintDialog();
+        if (dialog.ShowDialog() != true) return;
+
+        var image = new System.Windows.Controls.Image
+        {
+            Source = _currentImage.Preview,
+            Stretch = Stretch.Uniform
+        };
+        var pageSize = new Size(dialog.PrintableAreaWidth, dialog.PrintableAreaHeight);
+        image.Measure(pageSize);
+        image.Arrange(new Rect(pageSize));
+
+        var docName = Path.GetFileName(_catalog.CurrentFile ?? "BananaView");
+        dialog.PrintVisual(image, docName);
     }
 
     private void Prev_Click(object sender, RoutedEventArgs e) => Navigate(-1);
@@ -1017,6 +1090,10 @@ public partial class MainWindow : Window
                 Delete_Click(this, new RoutedEventArgs()); break;
             case Key.R:
                 Canvas.RotateBy(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -90 : 90); break;
+            case Key.F2:
+                Rename_Click(this, new RoutedEventArgs()); break;
+            case Key.P when Keyboard.Modifiers.HasFlag(ModifierKeys.Control):
+                Print_Click(this, new RoutedEventArgs()); break;
             case Key.Escape:
                 if (OcrOverlay.Visibility == Visibility.Visible) CloseOcrOverlay();
                 else if (_fullscreen) ToggleFullscreen();

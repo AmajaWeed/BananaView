@@ -214,6 +214,8 @@
                                 <Button x:Name="SearchImageButton" Content="&#xE773;" Click="SearchImage_Click" Style="{StaticResource ToolbarButton}" ToolTip="Поиск по изображению"/>
                                 <Separator Style="{StaticResource ToolbarSeparator}"/>
                                 <Button Content="&#xE70F;" Click="EditIn_Click" Style="{StaticResource ToolbarButton}" ToolTip="Редактировать в..."/>
+                                <Button Content="&#xE8AC;" Click="Rename_Click" Style="{StaticResource ToolbarButton}" ToolTip="Переименовать (F2)"/>
+                                <Button Content="&#xE749;" Click="Print_Click" Style="{StaticResource ToolbarButton}" ToolTip="Печать (Ctrl+P)"/>
                             </StackPanel>
                         </DockPanel>
                     </Grid>

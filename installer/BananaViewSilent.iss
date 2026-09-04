@@ -10,7 +10,7 @@
 // For the version with a directory picker and a per-format association
 // picker, see BananaView.iss.
 #define MyAppName "BananaView"
-#define MyAppVersion "1.1.3"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "BananaView"
 #define MyAppExeName "BananaView.exe"
 #define MyAppIcoName "AppIcon.ico"
@@ -82,6 +82,9 @@ Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; Value
 Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".psd"; ValueData: "BananaView.Image"
 Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".procreate"; ValueData: "BananaView.Image"
 Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".sai2"; ValueData: "BananaView.Image"
+Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".kra"; ValueData: "BananaView.Image"
+Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".clip"; ValueData: "BananaView.Image"
+Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".avif"; ValueData: "BananaView.Image"
 
 ; Explorer thumbnail handler (see BananaView.iss for the full explanation of
 ; IThumbnailProvider/ShellEx) for the four formats Windows has no built-in
