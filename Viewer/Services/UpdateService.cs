@@ -25,47 +25,57 @@ public static class UpdateService
 
     public static async Task<UpdateCheckResult> CheckForUpdateAsync()
     {
-        try
+        // GitHub's own connectivity has proven flaky in practice (slow TLS
+        // handshakes, transient timeouts) - one retry after a short pause
+        // rides out a blip instead of reporting "update check failed" for
+        // what's usually just a bad moment on the wire, not a real problem.
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            using var http = NewClient();
-
-            var url = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
-            using var response = await http.GetAsync(url);
-            if (!response.IsSuccessStatusCode)
-                return new UpdateCheckResult(false, null, null, null, $"Сервер вернул {(int)response.StatusCode}");
-
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
-            var tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
-            var releaseUrl = doc.RootElement.TryGetProperty("html_url", out var htmlUrlProp)
-                ? htmlUrlProp.GetString()
-                : $"https://github.com/{Owner}/{Repo}/releases/latest";
-
-            string? assetUrl = null;
-            if (doc.RootElement.TryGetProperty("assets", out var assets))
+            try
             {
-                foreach (var asset in assets.EnumerateArray())
+                using var http = NewClient();
+
+                var url = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
+                using var response = await http.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
+                    return new UpdateCheckResult(false, null, null, null, $"Сервер вернул {(int)response.StatusCode}");
+
+                using var stream = await response.Content.ReadAsStreamAsync();
+                using var doc = await JsonDocument.ParseAsync(stream);
+                var tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+                var releaseUrl = doc.RootElement.TryGetProperty("html_url", out var htmlUrlProp)
+                    ? htmlUrlProp.GetString()
+                    : $"https://github.com/{Owner}/{Repo}/releases/latest";
+
+                string? assetUrl = null;
+                if (doc.RootElement.TryGetProperty("assets", out var assets))
                 {
-                    var name = asset.GetProperty("name").GetString() ?? "";
-                    if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    foreach (var asset in assets.EnumerateArray())
                     {
-                        assetUrl = asset.GetProperty("browser_download_url").GetString();
-                        break;
+                        var name = asset.GetProperty("name").GetString() ?? "";
+                        if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                        {
+                            assetUrl = asset.GetProperty("browser_download_url").GetString();
+                            break;
+                        }
                     }
                 }
+
+                var tagVersionText = tag.TrimStart('v', 'V');
+                if (!Version.TryParse(tagVersionText, out var latest))
+                    return new UpdateCheckResult(false, tag, releaseUrl, assetUrl, "Не удалось разобрать версию релиза");
+
+                var isNewer = latest > CurrentVersion;
+                return new UpdateCheckResult(isNewer, tag, releaseUrl, assetUrl, null);
             }
-
-            var tagVersionText = tag.TrimStart('v', 'V');
-            if (!Version.TryParse(tagVersionText, out var latest))
-                return new UpdateCheckResult(false, tag, releaseUrl, assetUrl, "Не удалось разобрать версию релиза");
-
-            var isNewer = latest > CurrentVersion;
-            return new UpdateCheckResult(isNewer, tag, releaseUrl, assetUrl, null);
+            catch (Exception ex)
+            {
+                if (attempt == 2) return new UpdateCheckResult(false, null, null, null, ex.Message);
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
         }
-        catch (Exception ex)
-        {
-            return new UpdateCheckResult(false, null, null, null, ex.Message);
-        }
+
+        return new UpdateCheckResult(false, null, null, null, "Не удалось проверить обновления");
     }
 
     // Downloads the release zip into %TEMP%\BananaViewUpdate\<version>\download\
@@ -163,7 +173,7 @@ public static class UpdateService
         var http = new HttpClient();
         http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BananaView", CurrentVersion.ToString()));
         http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        http.Timeout = TimeSpan.FromSeconds(10);
+        http.Timeout = TimeSpan.FromSeconds(30);
         return http;
     }
 
