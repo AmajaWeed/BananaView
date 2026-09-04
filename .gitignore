@@ -3,6 +3,7 @@ obj/
 installer/output/
 publish/
 *.user
+/*.zip
 
 # Debug/diagnostic dumps from development, not project source.
 /screenshot*.png
