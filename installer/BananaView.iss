@@ -1,5 +1,5 @@
 #define MyAppName "BananaView"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "BananaView"
 #define MyAppExeName "BananaView.exe"
 #define MyAppIcoName "AppIcon.ico"
