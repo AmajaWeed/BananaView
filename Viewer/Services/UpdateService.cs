@@ -109,16 +109,27 @@ public static class UpdateService
     // exit, mirrors extractedDir over the install directory (robocopy /MIR),
     // deletes the whole temp update root, and starts the app again - then
     // shuts this process down so the script's wait immediately succeeds.
+    //
+    // The install directory is Program Files (the installer requires admin
+    // to put it there), but BananaView.exe itself runs unelevated on a
+    // normal launch - so the swap script needs its OWN elevation request
+    // (Verb=runas) or robocopy silently fails to write there, the "update"
+    // does nothing, and relaunching just brings back the same old version.
+    // That silent failure - no error, no visible sign anything went wrong -
+    // is exactly what shipped originally; robocopy's own output is now
+    // logged instead of discarded so a future failure is at least visible.
     public static void ApplyUpdateAndRestart(string extractedDir)
     {
         var installDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
         var exePath = Path.Combine(installDir, "BananaView.exe");
         var tempRoot = Directory.GetParent(extractedDir)!.FullName; // .../BananaViewUpdate/<version>
         var scriptPath = Path.Combine(Path.GetTempPath(), $"BananaViewUpdate_{Guid.NewGuid():N}.ps1");
+        var logPath = Path.Combine(Path.GetTempPath(), "BananaViewUpdate.log");
 
         var script = $$"""
             $ErrorActionPreference = 'SilentlyContinue'
             $exe = "{{exePath}}"
+            $log = "{{logPath}}"
             for ($i = 0; $i -lt 60; $i++) {
                 $locked = $true
                 try {
@@ -129,7 +140,8 @@ public static class UpdateService
                 if (-not $locked) { break }
                 Start-Sleep -Milliseconds 500
             }
-            robocopy "{{extractedDir}}" "{{installDir}}" /MIR /NFL /NDL /NJH /NJS /R:3 /W:1 | Out-Null
+            robocopy "{{extractedDir}}" "{{installDir}}" /MIR /R:3 /W:1 *>> $log
+            "robocopy exit code: $LASTEXITCODE" | Out-File -Append $log
             Remove-Item -Recurse -Force "{{tempRoot}}"
             Start-Process -FilePath "{{exePath}}"
             """;
@@ -139,7 +151,8 @@ public static class UpdateService
             $"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{scriptPath}\"")
         {
             UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Hidden
+            WindowStyle = ProcessWindowStyle.Hidden,
+            Verb = "runas", // triggers the UAC prompt this needed but never asked for
         });
 
         System.Windows.Application.Current.Shutdown();
