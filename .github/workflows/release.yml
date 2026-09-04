@@ -10,6 +10,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: write # gh release create needs this - the default token is read-only otherwise
+
 jobs:
   release:
     runs-on: windows-latest
