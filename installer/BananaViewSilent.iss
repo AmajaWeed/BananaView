@@ -14,6 +14,7 @@
 #define MyAppPublisher "BananaView"
 #define MyAppExeName "BananaView.exe"
 #define MyAppIcoName "AppIcon.ico"
+#define MyAppThumbHostName "BananaView.ThumbnailProvider.comhost.dll"
 
 [Setup]
 AppId={{2E7C9E0E-9B77-4E5E-9B7A-2A1F6C5D8B10}}
@@ -75,10 +76,26 @@ Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; Value
 Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".procreate"; ValueData: "BananaView.Image"
 Root: HKLM; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".sai2"; ValueData: "BananaView.Image"
 
+; Explorer thumbnail handler (see BananaView.iss for the full explanation of
+; IThumbnailProvider/ShellEx) for the four formats Windows has no built-in
+; decoder for. {{e357fccd-...} is IThumbnailProvider's fixed IID (also the
+; ShellEx subkey name); {{327b8523-...} is our handler class's CLSID. The
+; doubled opening brace is Inno's own escape for a literal "{" in a
+; declarative value - without it "{e357fccd-...}" would be parsed as an
+; (unknown) constant reference, same reason [Setup]'s AppId is written that way.
+Root: HKLM; Subkey: "Software\Classes\.psd\ShellEx\{{e357fccd-a995-4576-b01f-234630154e96}"; ValueType: string; ValueName: ""; ValueData: "{{327b8523-1a5d-4c8d-9d60-611a8acf1572}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\.procreate\ShellEx\{{e357fccd-a995-4576-b01f-234630154e96}"; ValueType: string; ValueName: ""; ValueData: "{{327b8523-1a5d-4c8d-9d60-611a8acf1572}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\.sai2\ShellEx\{{e357fccd-a995-4576-b01f-234630154e96}"; ValueType: string; ValueName: ""; ValueData: "{{327b8523-1a5d-4c8d-9d60-611a8acf1572}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\.icns\ShellEx\{{e357fccd-a995-4576-b01f-234630154e96}"; ValueType: string; ValueName: ""; ValueData: "{{327b8523-1a5d-4c8d-9d60-611a8acf1572}"; Flags: uninsdeletekey
+
 [Run]
 ; No postinstall/skipifsilent: the Finished page that would normally host
 ; this as a checkbox is disabled above, so it's fired unconditionally instead.
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\{#MyAppThumbHostName}"""; Flags: runhidden
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait
+
+[UninstallRun]
+Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\{#MyAppThumbHostName}"""; Flags: runhidden; RunOnceId: "UnregisterThumbHandler"
 
 [Code]
 procedure SHChangeNotify(wEventId: Longint; uFlags: UINT; dwItem1: LongWord; dwItem2: LongWord);

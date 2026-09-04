@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Library</OutputType>
+    <!-- Windows Explorer shell extension: a COM in-proc server that Explorer
+         loads to render thumbnails for formats it can't decode itself. .NET 5+
+         "COM hosting" (EnableComHosting) builds the small native comhost.dll
+         stub that Explorer actually loads via regsvr32 - it's what lets this
+         be a normal C# class instead of a native C++ ATL project. Requires a
+         concrete RuntimeIdentifier (no AnyCPU) since it's architecture-specific;
+         x64-only matches the installer's ArchitecturesInstallIn64BitMode. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <EnableComHosting>true</EnableComHosting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>BananaView.ThumbnailProvider</AssemblyName>
+    <Platforms>x64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.16.0" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared with the main app rather than duplicated - see the comment there. -->
+    <Compile Include="..\Viewer\Loaders\Sai2NativeDecoder.cs" Link="Sai2NativeDecoder.cs" />
+  </ItemGroup>
+
+</Project>
