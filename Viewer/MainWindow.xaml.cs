@@ -450,8 +450,9 @@ public partial class MainWindow : Window
                 _activeVideoPlayer!.Visibility = Visibility.Visible;
                 _standbyVideoPlayer!.Visibility = Visibility.Visible;
                 _activeVideoPlayer.Opacity = 1;
+                _activeVideoPlayer.Volume = 1;
                 _standbyVideoPlayer.Opacity = 0;
-                StartSegment(_activeVideoPlayer, 0, play: false);
+                StartSegment(_activeVideoPlayer, 0, play: true);
                 PreloadStandbySegment();
                 VideoSeekBar.Maximum = _videoSegments.Length;
                 VideoSeekBar.Visibility = Visibility.Visible;
@@ -474,25 +475,30 @@ public partial class MainWindow : Window
         if (play) player.Play();
     }
 
-    // Loads the next segment into the standby player ahead of time, so the
-    // cut at MediaEnded is just an opacity swap between two already-ready
-    // players instead of a fresh Source load (which is what caused the black
-    // flash on every cut). MediaOpened primes it (Play, then immediately
-    // Pause) since MediaElement doesn't reliably render a first frame until
-    // Play() has been called at least once.
+    // Loads the next segment into the standby player ahead of time and lets
+    // it actually run (muted, Opacity 0 - invisible and inaudible) rather
+    // than trying to freeze it on frame 0: MediaElement doesn't reliably
+    // render anything until Play() has been running for a little while, and
+    // a same-tick Play()-then-Pause() "priming" trick doesn't give it enough
+    // real time to decode a frame, so pausing immediately just traded a
+    // reload-flash for an identical-looking blank-frame flash. Running it for
+    // real means whatever position it's drifted to by cut time already has
+    // real decoded frames - a small, invisible skip-ahead instead of black.
     private void PreloadStandbySegment()
     {
         if (_videoSegments.Length <= 1) return;
         var nextIndex = (_videoSegmentIndex + 1) % _videoSegments.Length;
         if (_standbyPreloadedIndex == nextIndex) return;
         _standbyPreloadedIndex = nextIndex;
-        StartSegment(_standbyVideoPlayer!, nextIndex, play: false);
+        _standbyVideoPlayer!.Volume = 0;
+        StartSegment(_standbyVideoPlayer, nextIndex, play: true);
     }
 
     private void SwapActiveStandby()
     {
         (_activeVideoPlayer, _standbyVideoPlayer) = (_standbyVideoPlayer, _activeVideoPlayer);
         _activeVideoPlayer!.Opacity = 1;
+        _activeVideoPlayer.Volume = 1;
         _standbyVideoPlayer!.Opacity = 0;
         _standbyVideoPlayer.Pause();
         _standbyPreloadedIndex = -1;
@@ -530,13 +536,7 @@ public partial class MainWindow : Window
     private void VideoPlayer_MediaOpened(object sender, RoutedEventArgs e)
     {
         var player = (MediaElement)sender;
-        if (player == _standbyVideoPlayer)
-        {
-            // Prime it: forces the first frame to actually render, then hold there.
-            player.Play();
-            player.Pause();
-            return;
-        }
+        if (player == _standbyVideoPlayer) return; // just runs in the background - see PreloadStandbySegment
 
         _videoSegmentDuration = player.NaturalDuration.HasTimeSpan ? player.NaturalDuration.TimeSpan : null;
         if (_pendingSeekFraction is { } fraction && _videoSegmentDuration is { } duration)
@@ -568,7 +568,10 @@ public partial class MainWindow : Window
     // they're scrubbing to, not just find out after releasing. This bypasses
     // the preload optimization (it directly reassigns the active player's
     // Source), so it can flash/stutter during the drag itself - acceptable
-    // for an explicit interactive scrub, unlike normal playback.
+    // for an explicit interactive scrub, unlike normal playback. Switching
+    // segments always plays (never just primes-and-pauses) for the same
+    // reason as PreloadStandbySegment - a paused-and-never-played
+    // MediaElement doesn't reliably render anything.
     private void VideoSeekBar_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (!_videoSeekBarUserDown || _videoSegments.Length == 0) return;
@@ -585,7 +588,7 @@ public partial class MainWindow : Window
         {
             _seekPreviewIndex = targetIndex;
             _pendingSeekFraction = fraction;
-            StartSegment(_activeVideoPlayer!, targetIndex, play: false);
+            StartSegment(_activeVideoPlayer!, targetIndex, play: true);
         }
         else if (_videoSegmentDuration is { } duration)
         {
@@ -610,6 +613,14 @@ public partial class MainWindow : Window
         {
             _activeVideoPlayer!.Play();
             _videoPlaying = true;
+        }
+        else
+        {
+            // PreviewSeek may have switched segments during the drag (always
+            // via Play(), see above), so this can't be a no-op assumption -
+            // explicitly pause back to a still frame if playback wasn't
+            // supposed to resume.
+            _activeVideoPlayer!.Pause();
         }
     }
 
