@@ -418,8 +418,7 @@ public partial class MainWindow : Window
         {
             if (_videoPlaying)
             {
-                _activeVideoPlayer!.Pause();
-                _videoPlaying = false;
+                PauseVideo();
                 PlayButton.Content = PlayGlyph;
                 return;
             }
@@ -458,9 +457,7 @@ public partial class MainWindow : Window
                 VideoSeekBar.Visibility = Visibility.Visible;
             }
 
-            _activeVideoPlayer!.Play();
-            _videoPlaying = true;
-            _videoProgressTimer.Start();
+            ResumeVideo();
             PlayButton.Content = PauseGlyph;
             return;
         }
@@ -473,6 +470,31 @@ public partial class MainWindow : Window
     {
         player.Source = new Uri(_videoSegments[index]);
         if (play) player.Play();
+    }
+
+    // Pausing only the active player left the standby one running (it needs
+    // to keep decoding in the background to stay preloaded - see
+    // PreloadStandbySegment) - so on a short segment, the standby could reach
+    // its own end and just sit stopped-at-last-frame while "paused". The next
+    // resume would then Play() an active player that was fine, but a
+    // following cut would find no usable preload (or a swap into a dead
+    // player), leaving the transport stuck until a manual seek forced a
+    // fresh Source. Pausing/resuming both players together keeps them in the
+    // same lockstep relationship regardless of how long the user leaves it paused.
+    private void PauseVideo()
+    {
+        _activeVideoPlayer?.Pause();
+        _standbyVideoPlayer?.Pause();
+        _videoProgressTimer.Stop();
+        _videoPlaying = false;
+    }
+
+    private void ResumeVideo()
+    {
+        _activeVideoPlayer?.Play();
+        _standbyVideoPlayer?.Play();
+        _videoProgressTimer.Start();
+        _videoPlaying = true;
     }
 
     // Loads the next segment into the standby player ahead of time and lets
@@ -560,7 +582,7 @@ public partial class MainWindow : Window
         if (_videoSegments.Length == 0) return;
         _videoSeekBarUserDown = true;
         _wasPlayingBeforeSeek = _videoPlaying;
-        _activeVideoPlayer!.Pause();
+        PauseVideo();
         _seekPreviewIndex = -1;
     }
 
@@ -611,16 +633,15 @@ public partial class MainWindow : Window
 
         if (_wasPlayingBeforeSeek)
         {
-            _activeVideoPlayer!.Play();
-            _videoPlaying = true;
+            ResumeVideo();
         }
         else
         {
             // PreviewSeek may have switched segments during the drag (always
-            // via Play(), see above), so this can't be a no-op assumption -
-            // explicitly pause back to a still frame if playback wasn't
-            // supposed to resume.
-            _activeVideoPlayer!.Pause();
+            // via Play(), see above), and PreloadStandbySegment just started
+            // the standby fresh - explicitly pause both back to a still
+            // frame if playback wasn't supposed to resume.
+            PauseVideo();
         }
     }
 
