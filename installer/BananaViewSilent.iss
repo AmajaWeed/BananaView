@@ -28,6 +28,13 @@ DisableWelcomePage=yes
 DisableDirPage=yes
 DisableReadyPage=yes
 DisableFinishedPage=yes
+; The whole point of this installer is zero prompts - Inno shows a language
+; picker before anything else runs whenever more than one [Languages] entry
+; is defined, regardless of the Disable* flags above (those only affect
+; wizard pages, not this pre-wizard dialog). Suppressing it explicitly rather
+; than dropping down to a single language keeps English available as a
+; fallback for anyone who'd rather read it, just without ever asking.
+ShowLanguageDialog=no
 OutputDir=output
 OutputBaseFilename=BananaView-Setup-Quiet
 SetupIconFile=..\Viewer\Resources\AppIcon.ico
